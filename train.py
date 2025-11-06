@@ -170,6 +170,8 @@ def build_optimizer(cfg, model):
             continue
         if ('layer' in n.lower()) and ('fc' in n.lower()):
             kan_params.append(p)
+        elif 'class_head' in n.lower():
+            kan_params.append(p)
         else:
             base_params.append(p)
     groups = [
