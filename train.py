@@ -113,9 +113,9 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
         mask_ext = '.nii.gz'
 
     train_tf = A.Compose([
+        A.Resize(cfg['input_h'], cfg['input_w']),
         A.RandomRotate90(),
         A.HorizontalFlip(),
-        A.Resize(cfg['input_h'], cfg['input_w']),
         A.Normalize(),
     ])
     val_tf = A.Compose([
@@ -125,10 +125,10 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
 
     train_ds = Dataset(cfg['image_dir'], cfg['mask_dir'],
                        img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
-                       transform=train_tf)
+                       transform=train_tf,mode='train')
     val_ds   = Dataset(cfg['image_dir'], cfg['mask_dir'],
                        img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
-                       transform=val_tf)
+                       transform=val_tf, mode='val')
 
     dl_common = dict(batch_size=cfg['batch_size'], pin_memory=True)
     if cfg['num_workers'] > 0:
