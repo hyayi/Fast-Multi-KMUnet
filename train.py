@@ -125,10 +125,10 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
 
     train_ds = Dataset(cfg['image_dir'], cfg['mask_dir'],
                        img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
-                       transform=train_tf,mode='train')
+                       transform=train_tf,mode="train")
     val_ds   = Dataset(cfg['image_dir'], cfg['mask_dir'],
                        img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
-                       transform=val_tf, mode='val')
+                       transform=val_tf, mode="val")
 
     dl_common = dict(batch_size=cfg['batch_size'], pin_memory=True)
     if cfg['num_workers'] > 0:
@@ -269,7 +269,7 @@ def select_amp_dtype(mode: str):
     # auto
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main, sampler=None):
+def train_one_epoch(cfg, loader, model, criterion,cls_criterion, optimizer, scaler, amp_dtype, device, is_main,loss_weight, sampler=None):
     if sampler is not None:
         sampler.set_epoch(cfg['epoch'])  # DDP: 매 에폭 셔플 시드 동기화
     model.train()
@@ -294,14 +294,14 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
                 out, cls_out = model(x)
-                cls_loss = nn.CrossEntropyLoss()(cls_out, cls_y)
+                cls_loss = cls_criterion(cls_out, cls_y)
                 seg_loss = criterion(out, y)
-                loss = seg_loss + cls_loss
+                loss = seg_loss + loss_weight*cls_loss
         else:
             out, cls_out = model(x)
-            cls_loss = nn.CrossEntropyLoss()(cls_out, cls_y)
+            cls_loss = cls_criterion(cls_out, cls_y)
             seg_loss = criterion(out, y)
-            loss = seg_loss + cls_loss
+            loss = seg_loss + loss_weight*cls_loss
 
         if scaler is not None:
             scaler.scale(loss).backward()
@@ -351,7 +351,7 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
     )
 
 @torch.no_grad()
-def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main, num_classes=2):
+def validate_one_epoch(cfg, loader, model, criterion,cls_criterion, amp_dtype, device, is_main,loss_weight, num_classes=2):
     model.eval()
     sum_seg_loss = 0.0
     sum_cls_loss = 0.0
@@ -375,14 +375,14 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
                 out, cls_out = model(x)
-                cls_loss = nn.CrossEntropyLoss()(cls_out, cls_y)
+                cls_loss = cls_criterion(cls_out, cls_y)
                 seg_loss = criterion(out, y)
-                loss = seg_loss + cls_loss
+                loss = seg_loss + loss_weight*cls_loss
         else:
             out, cls_out = model(x)
-            cls_loss = nn.CrossEntropyLoss()(cls_out, cls_y)
+            cls_loss = cls_criterion(cls_out, cls_y)
             seg_loss = criterion(out, y)
-            loss = seg_loss + cls_loss
+            loss = seg_loss + loss_weight*cls_loss
 
         iou, dice, _ = iou_score(out, y)
         bs = x.size(0)
@@ -497,6 +497,7 @@ def parse_args():
     # loss
     LOSS_NAMES = losses.__all__ + ['BCEWithLogitsLoss']
     p.add_argument('--loss', default='BCEDiceLoss', choices=LOSS_NAMES)
+    p.add_argument('--loss_weight', type=float, default='1.0')
 
     # optim
     p.add_argument('--optimizer', default='Adam', choices=['Adam','SGD'])
@@ -562,6 +563,7 @@ def main():
         embed_dims=cfg['input_list'], no_kan=cfg['no_kan'],num_cls_classes=cfg['num_cls_classes']
     ).to(device)
     criterion = build_criterion(cfg['loss'])
+    cls_criterion = nn.CrossEntropyLoss().to(device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
 
@@ -621,10 +623,12 @@ def main():
         if is_main:
             print(f"Epoch [{epoch}/{cfg['epochs']}]")
 
-        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer,
-                             scaler, amp_dtype, device, is_main, sampler=train_sampler)
+        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer,loss
+                             scaler, amp_dtype, device, is_main, sampler=train_sampler,loss_weight=cfg['loss_weight']
+                             , cls_criterion=cls_criterion)
         va = validate_one_epoch(cfg, val_loader, model, criterion, amp_dtype, device, is_main, 
-                               num_classes=cfg['num_cls_classes'])
+                               num_classes=cfg['num_cls_classes'], loss_weight=cfg['loss_weight'],
+                               cls_criterion=cls_criterion)
 
         if scheduler is not None:
             if isinstance(scheduler, lr_scheduler.ReduceLROnPlateau):
