@@ -269,7 +269,7 @@ def select_amp_dtype(mode: str):
     # auto
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-def train_one_epoch(cfg, loader, model, criterion,cls_criterion, optimizer, scaler, amp_dtype, device, is_main,loss_weight, sampler=None):
+def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main,loss_weight, cls_criterion,sampler=None):
     if sampler is not None:
         sampler.set_epoch(cfg['epoch'])  # DDP: 매 에폭 셔플 시드 동기화
     model.train()
@@ -351,7 +351,7 @@ def train_one_epoch(cfg, loader, model, criterion,cls_criterion, optimizer, scal
     )
 
 @torch.no_grad()
-def validate_one_epoch(cfg, loader, model, criterion,cls_criterion, amp_dtype, device, is_main,loss_weight, num_classes=2):
+def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main,loss_weight,cls_criterion, num_classes=2):
     model.eval()
     sum_seg_loss = 0.0
     sum_cls_loss = 0.0
