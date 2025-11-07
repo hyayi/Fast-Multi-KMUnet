@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import os
 import matplotlib.pyplot as plt
 from utils import *
+from fast_kan import FastKANLayer
 import timm
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import types
@@ -18,7 +19,7 @@ import math
 from abc import ABCMeta, abstractmethod
 # from mmcv.cnn import ConvModule
 from pdb import set_trace as st
-from kan import KANLinear
+
 from torch.nn import init
 
 import time
@@ -53,52 +54,43 @@ class KANLayer(nn.Module):
         hidden_features = hidden_features or in_features
         self.dim = in_features
         
-        grid_size=5
-        spline_order=3
-        scale_noise=0.1
-        scale_base=1.0
-        scale_spline=1.0
-        base_activation=torch.nn.SiLU
-        grid_eps=0.02
-        grid_range=[-1, 1]
-
+        grid_min: float = -2.
+        grid_max: float = 2.
+        num_grids: int = 8
+        use_base_update: bool = True
+        base_activation = F.silu
+        spline_weight_init_scale: float = 0.1
 
         if not no_kan:
-            self.fc1 = KANLinear(
-                        in_features,
+            self.fc1 = FastKANLayer(
+                        in_features, 
                         hidden_features,
-                        grid_size=grid_size,
-                        spline_order=spline_order,
-                        scale_noise=scale_noise,
-                        scale_base=scale_base,
-                        scale_spline=scale_spline,
+                        grid_min=grid_min,
+                        grid_max=grid_max,
+                        num_grids=num_grids,
+                        use_base_update=use_base_update,
                         base_activation=base_activation,
-                        grid_eps=grid_eps,
-                        grid_range=grid_range,
+                        spline_weight_init_scale=spline_weight_init_scale
                     )
-            self.fc2 = KANLinear(
+            self.fc2 = FastKANLayer(
                         hidden_features,
                         out_features,
-                        grid_size=grid_size,
-                        spline_order=spline_order,
-                        scale_noise=scale_noise,
-                        scale_base=scale_base,
-                        scale_spline=scale_spline,
+                        grid_min=grid_min,
+                        grid_max=grid_max,
+                        num_grids=num_grids,
+                        use_base_update=use_base_update,
                         base_activation=base_activation,
-                        grid_eps=grid_eps,
-                        grid_range=grid_range,
+                        spline_weight_init_scale=spline_weight_init_scale
                     )
-            self.fc3 = KANLinear(
+            self.fc3 = FastKANLayer(
                         hidden_features,
                         out_features,
-                        grid_size=grid_size,
-                        spline_order=spline_order,
-                        scale_noise=scale_noise,
-                        scale_base=scale_base,
-                        scale_spline=scale_spline,
+                        grid_min=grid_min,
+                        grid_max=grid_max,
+                        num_grids=num_grids,
+                        use_base_update=use_base_update,
                         base_activation=base_activation,
-                        grid_eps=grid_eps,
-                        grid_range=grid_range,
+                        spline_weight_init_scale=spline_weight_init_scale
                     )
             # # TODO   
             # self.fc4 = KANLinear(
@@ -383,16 +375,14 @@ class UKANCls(nn.Module):
             drop=drop_rate, drop_path=dpr[1], norm_layer=norm_layer
             )])
 
-        self.class_head = KANLinear(
+        self.class_head = FastKANLayer(
             embed_dims[2],num_cls_classes,
-            grid_size=5,
-            spline_order=3,
-            scale_noise=0.1,
-            scale_base=1.0,
-            scale_spline=1.0,
-            base_activation=torch.nn.SiLU,
-            grid_eps=0.02,
-            grid_range=[-1, 1],
+            grid_min=-2.,
+            grid_max=2.,
+            num_grids=8,
+            use_base_update=True,
+            base_activation=F.silu,
+            spline_weight_init_scale=0.1
         )
 
         self.dblock1 = nn.ModuleList([KANBlock(
