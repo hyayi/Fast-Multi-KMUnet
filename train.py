@@ -623,8 +623,8 @@ def main():
         if is_main:
             print(f"Epoch [{epoch}/{cfg['epochs']}]")
 
-        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer,loss
-                             scaler, amp_dtype, device, is_main, sampler=train_sampler,loss_weight=cfg['loss_weight']
+        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer,scaler, 
+                             amp_dtype, device, is_main, sampler=train_sampler,loss_weight=cfg['loss_weight']
                              , cls_criterion=cls_criterion)
         va = validate_one_epoch(cfg, val_loader, model, criterion, amp_dtype, device, is_main, 
                                num_classes=cfg['num_cls_classes'], loss_weight=cfg['loss_weight'],
