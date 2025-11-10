@@ -383,17 +383,18 @@ class UKANCls(nn.Module):
             drop=drop_rate, drop_path=dpr[1], norm_layer=norm_layer
             )])
 
-        self.class_head = KANLinear(
-            embed_dims[2],num_cls_classes,
-            grid_size=5,
-            spline_order=3,
-            scale_noise=0.1,
-            scale_base=1.0,
-            scale_spline=1.0,
-            base_activation=torch.nn.SiLU,
-            grid_eps=0.02,
-            grid_range=[-1, 1],
-        )
+        # self.class_head = KANLinear(
+        #     embed_dims[2],num_cls_classes,
+        #     grid_size=5,
+        #     spline_order=3,
+        #     scale_noise=0.1,
+        #     scale_base=1.0,
+        #     scale_spline=1.0,
+        #     base_activation=torch.nn.SiLU,
+        #     grid_eps=0.02,
+        #     grid_range=[-1, 1],
+        # )
+        self.class_head = nn.Linear(embed_dims[2], num_cls_classes)
 
         self.dblock1 = nn.ModuleList([KANBlock(
             dim=embed_dims[1], 
