@@ -394,7 +394,13 @@ class UKANCls(nn.Module):
         #     grid_eps=0.02,
         #     grid_range=[-1, 1],
         # )
-        self.class_head = nn.Linear(embed_dims[2], num_cls_classes)
+        self.class_head = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(embed_dims[2], embed_dims[2] // 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(embed_dims[2] // 2, num_cls_classes)
+        )
 
         self.dblock1 = nn.ModuleList([KANBlock(
             dim=embed_dims[1], 
@@ -490,7 +496,8 @@ class UKANCls(nn.Module):
             out = blk(out, H, W)
         out = self.norm4(out)
 
-        class_out = self.class_head(F.adaptive_avg_pool1d(out.transpose(1,2),1).squeeze(-1))
+        pooled_features = out.mean(dim=1)
+        class_out = self.class_head(pooled_features)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         # print(f"After norm4 and reshape shape: {out.shape}")
 

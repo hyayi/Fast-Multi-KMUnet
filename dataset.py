@@ -56,7 +56,7 @@ class Dataset(torch.utils.data.Dataset):
         cls_df = cls_df[cls_df['type'] == mode]
         cls_df = cls_df.reset_index(drop=True)
         cls_df = cls_df[['image','class_new']]
-        cls_df = cls_df[cls_df['class_new'].isin(['complete','incomplete'])]
+        cls_df = cls_df[cls_df['class_new'].isin(['complete','incomplete'])].reset_index(drop=True)
         return cls_df
     def __len__(self):
         return len(self.cls_df)

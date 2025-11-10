@@ -13,12 +13,19 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 import albumentations as A
 
+# torchmetrics import 추가
+from torchmetrics.classification import (
+    MulticlassAUROC, 
+    MulticlassAveragePrecision,
+    MulticlassF1Score,
+    MulticlassAccuracy
+)
+
 import archs, losses
 from dataset import Dataset
 from metrics import iou_score
 from utils import AverageMeter, str2bool
 from tensorboardX import SummaryWriter
-from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
 
 
 # ------------------------- Utils -------------------------
@@ -170,8 +177,6 @@ def build_optimizer(cfg, model):
             continue
         if ('layer' in n.lower()) and ('fc' in n.lower()):
             kan_params.append(p)
-        elif 'class_head' in n.lower():
-            kan_params.append(p)
         else:
             base_params.append(p)
     groups = [
@@ -197,66 +202,6 @@ def build_scheduler(cfg, optimizer):
     raise NotImplementedError
 
 
-# ------------------------- Classification Metrics -------------------------
-
-def compute_classification_metrics(all_probs, all_labels, num_classes=2):
-    """
-    AUROC, AUPRC, F1 계산 (각 클래스별 + 평균)
-    
-    Args:
-        all_probs: (N, num_classes) numpy array - softmax probabilities
-        all_labels: (N,) numpy array - ground truth labels
-        num_classes: number of classes (default=2)
-    
-    Returns:
-        dict with auroc, auprc, f1 (per class and average)
-    """
-    metrics = {}
-    
-    # Per-class metrics
-    auroc_per_class = []
-    auprc_per_class = []
-    f1_per_class = []
-    
-    for c in range(num_classes):
-        # Binary labels for class c
-        binary_labels = (all_labels == c).astype(int)
-        probs_c = all_probs[:, c]
-        
-        # AUROC
-        try:
-            auroc_c = roc_auc_score(binary_labels, probs_c)
-        except:
-            auroc_c = 0.0
-        auroc_per_class.append(auroc_c)
-        
-        # AUPRC (Average Precision)
-        try:
-            auprc_c = average_precision_score(binary_labels, probs_c)
-        except:
-            auprc_c = 0.0
-        auprc_per_class.append(auprc_c)
-        
-        # F1 Score (threshold at 0.5)
-        preds_c = (probs_c > 0.5).astype(int)
-        try:
-            f1_c = f1_score(binary_labels, preds_c, zero_division=0)
-        except:
-            f1_c = 0.0
-        f1_per_class.append(f1_c)
-        
-        metrics[f'auroc_class{c}'] = auroc_c
-        metrics[f'auprc_class{c}'] = auprc_c
-        metrics[f'f1_class{c}'] = f1_c
-    
-    # Average metrics
-    metrics['auroc_avg'] = np.mean(auroc_per_class)
-    metrics['auprc_avg'] = np.mean(auprc_per_class)
-    metrics['f1_avg'] = np.mean(f1_per_class)
-    
-    return metrics
-
-
 # ------------------------- Train/Valid (AMP 지원) -------------------------
 
 def select_amp_dtype(mode: str):
@@ -269,7 +214,7 @@ def select_amp_dtype(mode: str):
     # auto
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main,loss_weight, cls_criterion,sampler=None):
+def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main, loss_weight, cls_criterion, sampler=None):
     if sampler is not None:
         sampler.set_epoch(cfg['epoch'])  # DDP: 매 에폭 셔플 시드 동기화
     model.train()
@@ -284,7 +229,7 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
     pbar = tqdm(total=len(loader)) if is_main else None
     autocast_enabled = amp_dtype is not None
     
-    for x, y, cls_y, _ in loader:  # 문법 오류 수정 (쉼표 추가)
+    for x, y, cls_y, _ in loader:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         cls_y = cls_y.to(device, non_blocking=True)
@@ -351,18 +296,26 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
     )
 
 @torch.no_grad()
-def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main,loss_weight,cls_criterion, num_classes=2):
+def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main, loss_weight, cls_criterion, num_classes=2):
     model.eval()
+    
+    # torchmetrics 메트릭 초기화
+    auroc_macro = MulticlassAUROC(num_classes=num_classes, average='macro').to(device)
+    auprc_macro = MulticlassAveragePrecision(num_classes=num_classes, average='macro').to(device)
+    f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro').to(device)
+    acc_metric = MulticlassAccuracy(num_classes=num_classes, average='micro').to(device)
+    
+    # Per-class metrics
+    auroc_per_class = MulticlassAUROC(num_classes=num_classes, average=None).to(device)
+    auprc_per_class = MulticlassAveragePrecision(num_classes=num_classes, average=None).to(device)
+    f1_per_class = MulticlassF1Score(num_classes=num_classes, average=None).to(device)
+    
     sum_seg_loss = 0.0
     sum_cls_loss = 0.0
     sum_total_loss = 0.0
     sum_iou = 0.0
     sum_dice = 0.0
     n_samples = 0
-    
-    # Classification metrics 수집용
-    all_cls_probs = []
-    all_cls_labels = []
     
     pbar = tqdm(total=len(loader)) if is_main else None
     autocast_enabled = amp_dtype is not None
@@ -393,12 +346,14 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
         sum_dice += float(dice) * bs
         n_samples += bs
         
-        # Classification outputs 저장
-        cls_probs = torch.softmax(cls_out, dim=1).float().cpu().numpy()
-        cls_y = cls_y.cpu().numpy()
-
-        all_cls_probs.append(cls_probs)
-        all_cls_labels.append(cls_y)
+        # torchmetrics update (배치별 누적, 자동으로 DDP sync)
+        auroc_macro.update(cls_out, cls_y)
+        auprc_macro.update(cls_out, cls_y)
+        f1_macro.update(cls_out, cls_y)
+        acc_metric.update(cls_out, cls_y)
+        auroc_per_class.update(cls_out, cls_y)
+        auprc_per_class.update(cls_out, cls_y)
+        f1_per_class.update(cls_out, cls_y)
         
         if pbar:
             pbar.set_postfix(OrderedDict(
@@ -411,30 +366,15 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
             pbar.update(1)
     if pbar: pbar.close()
 
-    # 모든 랭크에서 classification outputs 수집
-    all_cls_probs = np.concatenate(all_cls_probs, axis=0)
-    all_cls_labels = np.concatenate(all_cls_labels, axis=0)
+    # torchmetrics compute (자동으로 DDP sync 완료)
+    auroc_avg = auroc_macro.compute().item()
+    auprc_avg = auprc_macro.compute().item()
+    f1_avg = f1_macro.compute().item()
+    accuracy = acc_metric.compute().item()
     
-    # DDP: 전 랭크에서 수집 (gather)
-    if dist.is_initialized():
-        # Convert to tensors for gathering
-        probs_tensor = torch.from_numpy(all_cls_probs).to(device)
-        labels_tensor = torch.from_numpy(all_cls_labels).to(device)
-        
-        # Gather all
-        world_size = dist.get_world_size()
-        gathered_probs = [torch.zeros_like(probs_tensor) for _ in range(world_size)]
-        gathered_labels = [torch.zeros_like(labels_tensor) for _ in range(world_size)]
-        
-        dist.all_gather(gathered_probs, probs_tensor)
-        dist.all_gather(gathered_labels, labels_tensor)
-        
-        # Concatenate
-        all_cls_probs = torch.cat(gathered_probs, dim=0).cpu().numpy()
-        all_cls_labels = torch.cat(gathered_labels, dim=0).cpu().numpy()
-    
-    # Compute classification metrics
-    cls_metrics = compute_classification_metrics(all_cls_probs, all_cls_labels, num_classes)
+    auroc_classes = auroc_per_class.compute().cpu().numpy()
+    auprc_classes = auprc_per_class.compute().cpu().numpy()
+    f1_classes = f1_per_class.compute().cpu().numpy()
 
     # Loss/IoU/Dice allreduce
     stats = {
@@ -458,9 +398,19 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
         seg_loss=va_seg_loss,
         cls_loss=va_cls_loss,
         iou=va_iou,
-        dice=va_dice
+        dice=va_dice,
+        # Classification metrics
+        auroc_avg=auroc_avg,
+        auprc_avg=auprc_avg,
+        f1_avg=f1_avg,
+        accuracy=accuracy,
+        auroc_class0=float(auroc_classes[0]),
+        auroc_class1=float(auroc_classes[1]) if num_classes > 1 else 0.0,
+        auprc_class0=float(auprc_classes[0]),
+        auprc_class1=float(auprc_classes[1]) if num_classes > 1 else 0.0,
+        f1_class0=float(f1_classes[0]),
+        f1_class1=float(f1_classes[1]) if num_classes > 1 else 0.0,
     )
-    result.update(cls_metrics)
     
     return result
 
@@ -494,10 +444,11 @@ def parse_args():
     p.add_argument('--input_h', default=1024, type=int)
     p.add_argument('--input_list', type=list_type, default=[128,160,256])
     p.add_argument('--no_kan', action='store_true')
+    
     # loss
     LOSS_NAMES = losses.__all__ + ['BCEWithLogitsLoss']
     p.add_argument('--loss', default='BCEDiceLoss', choices=LOSS_NAMES)
-    p.add_argument('--loss_weight', type=float, default='1.0')
+    p.add_argument('--loss_weight', type=float, default=1.0)
 
     # optim
     p.add_argument('--optimizer', default='Adam', choices=['Adam','SGD'])
@@ -560,7 +511,7 @@ def main():
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
     model = archs.__dict__[cfg['arch']](
         cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
-        embed_dims=cfg['input_list'], no_kan=cfg['no_kan'],num_cls_classes=cfg['num_cls_classes']
+        embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes']
     ).to(device)
     criterion = build_criterion(cfg['loss'])
     cls_criterion = nn.CrossEntropyLoss().to(device)
@@ -611,7 +562,7 @@ def main():
         epoch=[], lr=[],
         loss=[], seg_loss=[], cls_loss=[], iou=[],
         val_loss=[], val_seg_loss=[], val_cls_loss=[], val_iou=[], val_dice=[],
-        val_auroc_avg=[], val_auprc_avg=[], val_f1_avg=[],
+        val_auroc_avg=[], val_auprc_avg=[], val_f1_avg=[], val_accuracy=[],
         val_auroc_class0=[], val_auroc_class1=[],
         val_auprc_class0=[], val_auprc_class1=[],
         val_f1_class0=[], val_f1_class1=[]
@@ -623,9 +574,9 @@ def main():
         if is_main:
             print(f"Epoch [{epoch}/{cfg['epochs']}]")
 
-        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer,scaler, 
-                             amp_dtype, device, is_main, sampler=train_sampler,loss_weight=cfg['loss_weight']
-                             , cls_criterion=cls_criterion)
+        tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer, scaler, 
+                             amp_dtype, device, is_main, loss_weight=cfg['loss_weight'],
+                             cls_criterion=cls_criterion, sampler=train_sampler)
         va = validate_one_epoch(cfg, val_loader, model, criterion, amp_dtype, device, is_main, 
                                num_classes=cfg['num_cls_classes'], loss_weight=cfg['loss_weight'],
                                cls_criterion=cls_criterion)
@@ -658,6 +609,7 @@ def main():
             log['val_auroc_avg'].append(va['auroc_avg'])
             log['val_auprc_avg'].append(va['auprc_avg'])
             log['val_f1_avg'].append(va['f1_avg'])
+            log['val_accuracy'].append(va['accuracy'])
             log['val_auroc_class0'].append(va['auroc_class0'])
             log['val_auroc_class1'].append(va['auroc_class1'])
             log['val_auprc_class0'].append(va['auprc_class0'])
@@ -685,6 +637,7 @@ def main():
                 tb.add_scalar('val/auroc_avg', va['auroc_avg'], epoch)
                 tb.add_scalar('val/auprc_avg', va['auprc_avg'], epoch)
                 tb.add_scalar('val/f1_avg', va['f1_avg'], epoch)
+                tb.add_scalar('val/accuracy', va['accuracy'], epoch)
                 tb.add_scalar('val/auroc_class0', va['auroc_class0'], epoch)
                 tb.add_scalar('val/auroc_class1', va['auroc_class1'], epoch)
                 tb.add_scalar('val/auprc_class0', va['auprc_class0'], epoch)
@@ -704,7 +657,7 @@ def main():
                       model, optimizer, scheduler, epoch, 
                       best_iou, best_dice, best_auroc, best_auprc, best_f1, cfg)
 
-        # 베스트 모델 저장 (IoU 기준, rank0만)
+        # 베스트 모델 저장 (Dice 기준, rank0만)
         if is_main and va['dice'] > best_dice:
             best_iou = va['iou']
             best_dice = va['dice']
