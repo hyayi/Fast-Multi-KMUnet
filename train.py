@@ -21,7 +21,7 @@ from torchmetrics.classification import (
     MulticlassAccuracy
 )
 
-import archs, losses
+import models, losses
 from dataset import Dataset
 from metrics import iou_score
 from utils import AverageMeter, str2bool
@@ -509,7 +509,7 @@ def main():
 
     # 모델/손실/옵티마/스케줄러
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-    model = archs.__dict__[cfg['arch']](
+    model = models.__dict__[cfg['arch']](
         cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
         embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes']
     ).to(device)

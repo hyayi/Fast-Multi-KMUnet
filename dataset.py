@@ -98,4 +98,20 @@ class Dataset(torch.utils.data.Dataset):
         cls_target = torch.tensor(cls_target, dtype=torch.long)  # 分类目标张量
         return img, mask, cls_target, {'img_id': img_id}
 
-    
+
+if __name__ == "__main__":
+    dataset = Dataset(
+        img_dir='/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/imagesTr',
+        mask_dir='/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/labelsTr',
+        img_ext='_0000.nii.gz',
+        mask_ext='.nii.gz',
+        num_classes=2,
+        cls_df_path='/data/image/project/ng_tube/nnunet/data/metafile/Dataset3006_label_version_3.00(25.08.14).csv',
+        mode='train',
+        transform=None
+    )
+    for img,mask,cls_target,info in iter(dataset):
+        print(img.shape)
+        print(mask.shape)
+        print(cls_target)
+        print(info)
