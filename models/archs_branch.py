@@ -47,7 +47,7 @@ try:
 except:
     pass
 
-__all__ = ['UKANCls']
+__all__ = ['UKANClsCNN']
 
 class KANLayer(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., no_kan=False):
@@ -357,7 +357,7 @@ from torch import nn
     
 # 添加ss2d块
 
-class UKANCls(nn.Module):
+class UKANClsCNN(nn.Module):
     def __init__(self, num_classes, input_channels=3, deep_supervision=False, img_size=224, patch_size=16, in_chans=3, embed_dims=[256, 320, 512], no_kan=False,
     drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[1, 1, 1],num_cls_classes=2, **kwargs):
         super().__init__()
@@ -386,24 +386,34 @@ class UKANCls(nn.Module):
             drop=drop_rate, drop_path=dpr[1], norm_layer=norm_layer
             )])
 
-        # self.class_head = KANLinear(
-        #     embed_dims[2],num_cls_classes,
-        #     grid_size=5,
-        #     spline_order=3,
-        #     scale_noise=0.1,
-        #     scale_base=1.0,
-        #     scale_spline=1.0,
-        #     base_activation=torch.nn.SiLU,
-        #     grid_eps=0.02,
-        #     grid_range=[-1, 1],
-        # )
-        self.class_head = nn.Sequential(
+        # --- 기존 class_head 삭제 ---
+        # self.class_head = nn.Sequential(...)
+
+        # --- 새로운 CNN 기반 class_head 정의 ---
+        # 입력: t3 (B, embed_dims[0], H/8, W/8)
+        # 예: (B, 128, 128, 128)
+        self.cnn_class_head = nn.Sequential(
+            # (B, 128, H/8, W/8) -> (B, 256, H/16, W/16)
+            nn.Conv2d(embed_dims[0], embed_dims[1], kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(embed_dims[1]),
+            nn.ReLU(inplace=True),
+            
+            # (B, 256, H/16, W/16) -> (B, 512, H/32, W/32)
+            nn.Conv2d(embed_dims[1], embed_dims[2], kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(embed_dims[2]),
+            nn.ReLU(inplace=True),
+            
+            nn.AdaptiveAvgPool2d((1, 1)), # -> (B, 512, 1, 1)
+            nn.Flatten(), # -> (B, 512)
+            
+            # 기존 Linear 헤드 구조 활용
             nn.Dropout(0.3),
             nn.Linear(embed_dims[2], embed_dims[2] // 2),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
             nn.Linear(embed_dims[2] // 2, num_cls_classes)
         )
+        # --- (수정 끝) ---
 
         self.dblock1 = nn.ModuleList([KANBlock(
             dim=embed_dims[1], 
@@ -426,136 +436,152 @@ class UKANCls(nn.Module):
 
         self.final = nn.Conv2d(embed_dims[0]//8, num_classes, kernel_size=1)
         self.soft = nn.Softmax(dim =1)
-        self.cbam = CBAM(channel=16)
-        self.cbam1 = CBAM(channel=32)
-        self.cbam2 = CBAM(channel=128)
+        
+        self.cbam = CBAM(channel=embed_dims[0]//8)
+        self.cbam1 = CBAM(channel=embed_dims[0]//4)
+        self.cbam2 = CBAM(channel=embed_dims[0])
 
-    
-# put shape: torch.Size([8, 3, 256, 256])
-# After Stage 1 (encoder1) shape: torch.Size([8, 16, 128, 128])
-# After Stage 2 (encoder2) shape: torch.Size([8, 32, 64, 64])
-# After Stage 3 (encoder3) shape: torch.Size([8, 128, 32, 32])
-# After Stage 4 (patch_embed3) shape: torch.Size([8, 256, 160]), H: 16, W: 16
-# After norm3 and reshape shape: torch.Size([8, 160, 16, 16])
-# After Bottleneck (patch_embed4) shape: torch.Size([8, 64, 256]), H: 8, W: 8
-# After norm4 and reshape shape: torch.Size([8, 256, 8, 8])
-# After decoder1 shape: torch.Size([8, 160, 16, 16])
-# After add t4 shape: torch.Size([8, 160, 16, 16])
-# After dblock1 shape: torch.Size([8, 256, 160])
-# After dnorm3 and reshape shape: torch.Size([8, 160, 16, 16])
-# After decoder2 shape: torch.Size([8, 128, 32, 32])
-# After add t3 shape: torch.Size([8, 128, 32, 32])
-# After dblock2 shape: torch.Size([8, 1024, 128])
-# After dnorm4 and reshape shape: torch.Size([8, 128, 32, 32])
-# After decoder3 shape: torch.Size([8, 32, 64, 64])
-# After add t2 shape: torch.Size([8, 32, 64, 64])
-# After decoder4 shape: torch.Size([8, 16, 128, 128])
-# After add t1 shape: torch.Size([8, 16, 128, 128])
-# After decoder5 shape: torch.Size([8, 16, 256, 256])
-
+        
     def forward(self, x):
-
-        # print(f"Input shape: {x.shape}")
         B = x.shape[0]
 
         ### Encoder
-        ### Conv Stage
-
         ### Stage 1
         out = F.relu(F.max_pool2d(self.encoder1(x), 2, 2))
-        # print(f"After Stage 1 (encoder1) shape: {out.shape}")
         t1 = out
         t1 = self.cbam(t1)
         
         ### Stage 2
         out = F.relu(F.max_pool2d(self.encoder2(out), 2, 2))
-        # print(f"After Stage 2 (encoder2) shape: {out.shape}")
         t2 = out
         t2 = self.cbam1(t2)
 
         ### Stage 3
         out = F.relu(F.max_pool2d(self.encoder3(out), 2, 2))
-        # print(f"After Stage 3 (encoder3) shape: {out.shape}")
         t3 = out
         t3 = self.cbam2(t3)
-        #print(f"After Stage 3 (encoder3) shape: {out.shape}")
+        # print(f"After Stage 3 (encoder3) shape: {t3.shape}")
+
+        # --- (수정) 새로운 분류 분기 ---
+        # t3 (CNN 인코더의 최종 출력)에서 분기
+        class_out = self.cnn_class_head(t3)
+        # --- (수정 끝) ---
 
         ### Tokenized KAN Stage
         ### Stage 4
-
-        out, H, W = self.patch_embed3(out)
+        
+        # segmentation 경로는 t3가 아닌 'out' (t3와 동일)을 사용합니다.
+        # (참고: t3 = self.cbam2(out)이므로, KAN 경로는 CBAM 적용된 것을 사용합니다)
+        out, H, W = self.patch_embed3(t3) 
         # print(f"After Stage 4 (patch_embed3) shape: {out.shape}, H: {H}, W: {W}")
         for i, blk in enumerate(self.block1):
             out = blk(out, H, W)
         out = self.norm3(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        # print(f"After norm3 and reshape shape: {out.shape}")
         t4 = out
 
         ### Bottleneck
-
         out, H, W = self.patch_embed4(out)
         # print(f"After Bottleneck (patch_embed4) shape: {out.shape}, H: {H}, W: {W}")
         for i, blk in enumerate(self.block2):
             out = blk(out, H, W)
         out = self.norm4(out)
 
-        pooled_features = out.mean(dim=1)
-        class_out = self.class_head(pooled_features)
+        # --- (수정) 기존 분류 헤드 제거 ---
+        # pooled_features = out.mean(dim=1)
+        # class_out = self.class_head(pooled_features)
+        # --- (수정 끝) ---
+        
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         # print(f"After norm4 and reshape shape: {out.shape}")
 
         ### Decoder
         ### Stage 4
         out = F.relu(F.interpolate(self.decoder1(out), scale_factor=(2, 2), mode='bilinear'))
-        # print(f"After decoder1 shape: {out.shape}")
         out = torch.add(out, t4)
         _, _, H, W = out.shape
-        # print(f"After add t4 shape: {out.shape}")
-
         out = out.flatten(2).transpose(1, 2)
         for i, blk in enumerate(self.dblock1):
             out = blk(out, H, W)
-        # print(f"After dblock1 shape: {out.shape}")
 
         ### Stage 3
         out = self.dnorm3(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        # print(f"After dnorm3 and reshape shape: {out.shape}")
         out = F.relu(F.interpolate(self.decoder2(out), scale_factor=(2, 2), mode='bilinear'))
-        # print(f"After decoder2 shape: {out.shape}")
         out = torch.add(out, t3)
-        # print(f"After add t3 shape: {out.shape}")
         _, _, H, W = out.shape
         out = out.flatten(2).transpose(1, 2)
 
         for i, blk in enumerate(self.dblock2):
             out = blk(out, H, W)
-        # print(f"After dblock2 shape: {out.shape}")
 
         out = self.dnorm4(out)
         out = out.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        # print(f"After dnorm4 and reshape shape: {out.shape}")
 
         out = F.relu(F.interpolate(self.decoder3(out), scale_factor=(2, 2), mode='bilinear'))
-        # print(f"After decoder3 shape: {out.shape}")
         out = torch.add(out, t2)
-        # print(f"After add t2 shape: {out.shape}")
         out = F.relu(F.interpolate(self.decoder4(out), scale_factor=(2, 2), mode='bilinear'))
-        # print(f"After decoder4 shape: {out.shape}")
         out = torch.add(out, t1)
-        # print(f"After add t1 shape: {out.shape}")
         out = F.relu(F.interpolate(self.decoder5(out), scale_factor=(2, 2), mode='bilinear'))
-        # print(f"After decoder5 shape: {out.shape}")
 
+        # class_out은 이미 위에서 계산되었습니다.
         return self.final(out), class_out
 
-
 if __name__ == "__main__":
-    model = UKANCls(num_classes=2, input_channels=3, img_size=1024, patch_size=16, in_chans=3,
-     embed_dims=[128, 256, 512], depths=[1, 1], num_cls_classes=2)
+    import time
 
-    x = torch.randn((8, 3, 1024, 1024))
-    seg_out, cls_out = model(x)
+    # 1. 장치 설정
+    device = torch.device("cpu")
+    print(f"Using device: {device}")
+
+    # 2. 모델 초기화 및 장치로 이동
+    model = UKANCls(num_classes=2, input_channels=3, img_size=1024, patch_size=16, in_chans=3,
+      embed_dims=[128, 256, 512], depths=[1, 1], num_cls_classes=2)
+    model.to(device)
+    model.eval() # 추론 모드로 설정 (Dropout 등 비활성화)
+
+    # 3. 파라미터 수 계산 (학습 가능한 파라미터만)
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total trainable parameters: {total_params / 1_000_000:.2f} M")
+
+    # 4. 더미 입력 데이터 생성 (장치로 이동)
+    # 참고: (8, 3, 1024, 1024) 배치는 VRAM이 많이 필요할 수 있습니다.
+    try:
+        x = torch.randn((1, 3, 1024, 1024)).to(device)
+        print(f"Input shape: {x.shape}")
+    except RuntimeError as e:
+        print(f"Error creating input tensor (likely OOM): {e}")
+        print("Batch size 8 may be too large for 1024x1024. Exiting.")
+        exit()
+
+    # 5. 웜업(Warm-up) 실행 (정확한 시간 측정을 위해)
+    print("Running warm-up pass...")
+    with torch.no_grad():
+        _ = model(x)
+    if device.type == 'cuda':
+        torch.cuda.synchronize()
+
+    # 6. 추론 시간 측정
+    print("Running timed inference...")
+    
+    start_time = time.time()
+    with torch.no_grad():
+        if device.type == 'cuda':
+            torch.cuda.synchronize() # CUDA 커널 실행 동기화 (시작)
+            
+        seg_out, cls_out = model(x)
+        
+        if device.type == 'cuda':
+            torch.cuda.synchronize() # CUDA 커널 실행 동기화 (종료)
+            
+    end_time = time.time()
+    
+    duration = end_time - start_time
+    batch_size = x.shape[0]
+    fps = batch_size / duration # Frames Per Second
+
+    print("\n--- Results ---")
     print(f"Segmentation output shape: {seg_out.shape}")
     print(f"Classification output shape: {cls_out.shape}")
+    print(f"Inference time for batch of {batch_size}: {duration:.4f} seconds")
+    print(f"Frames Per Second (FPS): {fps:.2f}")
