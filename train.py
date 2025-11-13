@@ -180,15 +180,15 @@ def build_optimizer(cfg, model):
         else:
             base_params.append(p)
     groups = [
-        {'params': base_params, 'lr': cfg['lr'],     'weight_decay': cfg['weight_decay']},
+        {'params': base_params, 'lr': cfg['lr'],      'weight_decay': cfg['weight_decay']},
         {'params': kan_params,  'lr': cfg['kan_lr'], 'weight_decay': cfg['kan_weight_decay']},
     ]
     if cfg['optimizer'] == 'Adam':
         return optim.Adam(groups)
     elif cfg['optimizer'] == 'AdamW':
-        return optim.AdamW(groups, lr=cfg['lr'], weight_decay=cfg['weight_decay'])
+        return optim.AdamW(groups)
     return optim.SGD(groups, lr=cfg['lr'], momentum=cfg['momentum'],
-                     nesterov=cfg['nesterov'], weight_decay=cfg['weight_decay'])
+                         nesterov=cfg['nesterov'], weight_decay=cfg['weight_decay'])
 
 def build_scheduler(cfg, optimizer):
     if cfg['scheduler'] == 'CosineAnnealingLR':
@@ -198,7 +198,7 @@ def build_scheduler(cfg, optimizer):
                                               patience=cfg['patience'], verbose=True, min_lr=cfg['min_lr'])
     if cfg['scheduler'] == 'MultiStepLR':
         return lr_scheduler.MultiStepLR(optimizer,
-                milestones=[int(e) for e in cfg['milestones'].split(',')], gamma=cfg['gamma'])
+            milestones=[int(e) for e in cfg['milestones'].split(',')], gamma=cfg['gamma'])
     if cfg['scheduler'] == 'ConstantLR':
         return None
     raise NotImplementedError
@@ -216,10 +216,25 @@ def select_amp_dtype(mode: str):
     # auto
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main, loss_weight, cls_criterion, sampler=None):
+# --------------------------------------------------------------------------------
+# [수정 1] train_one_epoch 함수 시그니처 변경 (num_classes 추가)
+# --------------------------------------------------------------------------------
+def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype, device, is_main, loss_weight, cls_criterion, num_classes, sampler=None):
     if sampler is not None:
         sampler.set_epoch(cfg['epoch'])  # DDP: 매 에폭 셔플 시드 동기화
     model.train()
+
+    # --------------------------------------------------------------------------------
+    # [수정 2] train_one_epoch에 torchmetrics 초기화 코드 추가
+    # --------------------------------------------------------------------------------
+    auroc_macro = MulticlassAUROC(num_classes=num_classes, average='macro').to(device)
+    auprc_macro = MulticlassAveragePrecision(num_classes=num_classes, average='macro').to(device)
+    f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro').to(device)
+    acc_metric = MulticlassAccuracy(num_classes=num_classes, average='micro').to(device)
+    
+    auroc_per_class = MulticlassAUROC(num_classes=num_classes, average=None).to(device)
+    auprc_per_class = MulticlassAveragePrecision(num_classes=num_classes, average=None).to(device)
+    f1_per_class = MulticlassF1Score(num_classes=num_classes, average=None).to(device)
 
     # 글로벌 평균 계산용 누적치
     sum_seg_loss = 0.0
@@ -259,6 +274,18 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
             optimizer.step()
 
         iou, dice, _ = iou_score(out, y)
+
+        # --------------------------------------------------------------------------------
+        # [수정 3] train_one_epoch 루프 내에 metric.update() 호출 추가
+        # --------------------------------------------------------------------------------
+        auroc_macro.update(cls_out, cls_y)
+        auprc_macro.update(cls_out, cls_y)
+        f1_macro.update(cls_out, cls_y)
+        acc_metric.update(cls_out, cls_y)
+        auroc_per_class.update(cls_out, cls_y)
+        auprc_per_class.update(cls_out, cls_y)
+        f1_per_class.update(cls_out, cls_y)
+        
         bs = x.size(0)
         sum_seg_loss += float(seg_loss.item()) * bs
         sum_cls_loss += float(cls_loss.item()) * bs
@@ -276,6 +303,18 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
             pbar.update(1)
     if pbar: pbar.close()
 
+    # --------------------------------------------------------------------------------
+    # [수정 4] train_one_epoch 루프 종료 후 metric.compute() 호출 추가
+    # --------------------------------------------------------------------------------
+    auroc_avg = auroc_macro.compute().item()
+    auprc_avg = auprc_macro.compute().item()
+    f1_avg = f1_macro.compute().item()
+    accuracy = acc_metric.compute().item()
+    
+    auroc_classes = auroc_per_class.compute().cpu().numpy()
+    auprc_classes = auprc_per_class.compute().cpu().numpy()
+    f1_classes = f1_per_class.compute().cpu().numpy()
+
     # DDP: 전 랭크 합산 후 평균
     stats = {
         'seg_loss_sum': sum_seg_loss,
@@ -290,11 +329,25 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
     tr_total_loss = stats['total_loss_sum'] / max(stats['n'], 1)
     tr_iou = stats['iou_sum'] / max(stats['n'], 1)
     
+    # --------------------------------------------------------------------------------
+    # [수정 5] train_one_epoch 반환 OrderedDict에 classification metric 추가
+    # --------------------------------------------------------------------------------
     return OrderedDict(
         loss=tr_total_loss,
         seg_loss=tr_seg_loss,
         cls_loss=tr_cls_loss,
-        iou=tr_iou
+        iou=tr_iou,
+        # Classification metrics
+        auroc_avg=auroc_avg,
+        auprc_avg=auprc_avg,
+        f1_avg=f1_avg,
+        accuracy=accuracy,
+        auroc_class0=float(auroc_classes[0]),
+        auroc_class1=float(auroc_classes[1]) if num_classes > 1 else 0.0,
+        auprc_class0=float(auprc_classes[0]),
+        auprc_class1=float(auprc_classes[1]) if num_classes > 1 else 0.0,
+        f1_class0=float(f1_classes[0]),
+        f1_class1=float(f1_classes[1]) if num_classes > 1 else 0.0,
     )
 
 @torch.no_grad()
@@ -424,7 +477,7 @@ def parse_args():
 
     # basics
     p.add_argument('--name', default=None)
-    p.add_argument('--epochs', default=300, type=int)
+    p.add_overrideable('--epochs', default=300, type=int)
     p.add_argument('-b', '--batch_size', default=16, type=int)
     p.add_argument('--num_workers', default=4, type=int)
     p.add_argument('--output_dir', default='outputs')
@@ -445,7 +498,7 @@ def parse_args():
     p.add_argument('--input_w', default=1024, type=int)
     p.add_argument('--input_h', default=1024, type=int)
     p.add_argument('--input_list', type=list_type, default=[128,160,256])
-    p.add_argument('--no_kan', action='store_true')
+    p.add_overrideable('--no_kan', action='store_true')
     
     # loss
     LOSS_NAMES = losses.__all__ + ['BCEWithLogitsLoss']
@@ -463,7 +516,7 @@ def parse_args():
 
     # scheduler
     p.add_argument('--scheduler', default='CosineAnnealingLR',
-                   choices=['CosineAnnealingLR','ReduceLROnPlateau','MultiStepLR','ConstantLR'])
+                    choices=['CosineAnnealingLR','ReduceLROnPlateau','MultiStepLR','ConstantLR'])
     p.add_argument('--min_lr', default=1e-5, type=float)
     p.add_argument('--factor', default=0.1, type=float)
     p.add_argument('--patience', default=2, type=int)
@@ -473,7 +526,7 @@ def parse_args():
 
     # resume
     p.add_argument('--resume', type=str, default='',
-                   help='checkpoint(.pth/.pt/.tar) 경로. 비우면 신규 학습')
+                     help='checkpoint(.pth/.pt/.tar) 경로. 비우면 신규 학습')
     p.add_argument('--resume_strict', type=str2bool, default=True)
     p.add_argument('--resume_optim', type=str2bool, default=True)
     p.add_argument('--resume_sched', type=str2bool, default=True)
@@ -481,9 +534,9 @@ def parse_args():
     # DDP/AMP
     p.add_argument('--ddp_backend', default='nccl', choices=['nccl','gloo','mpi'])
     p.add_argument('--bucket_cap_mb', type=int, default=None,
-                   help='DDP gradient bucket size (MiB). None=PyTorch default(25MiB).')
+                     help='DDP gradient bucket size (MiB). None=PyTorch default(25MiB).')
     p.add_argument('--amp_dtype', default='auto', choices=['auto','bf16','fp16','off'],
-                   help='auto: bf16 if supported else fp16')
+                     help='auto: bf16 if supported else fp16')
     return p.parse_args()
 
 
@@ -560,9 +613,18 @@ def main():
     scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
 
     # --------- Train Loop ---------
+    # --------------------------------------------------------------------------------
+    # [수정 6] main의 log OrderedDict 정의에 train classification metric 추가
+    # --------------------------------------------------------------------------------
     log = OrderedDict(
         epoch=[], lr=[],
+        # Train metrics
         loss=[], seg_loss=[], cls_loss=[], iou=[],
+        auroc_avg=[], auprc_avg=[], f1_avg=[], accuracy=[],
+        auroc_class0=[], auroc_class1=[],
+        auprc_class0=[], auprc_class1=[],
+        f1_class0=[], f1_class1=[],
+        # Validation metrics
         val_loss=[], val_seg_loss=[], val_cls_loss=[], val_iou=[], val_dice=[],
         val_auroc_avg=[], val_auprc_avg=[], val_f1_avg=[], val_accuracy=[],
         val_auroc_class0=[], val_auroc_class1=[],
@@ -576,12 +638,17 @@ def main():
         if is_main:
             print(f"Epoch [{epoch}/{cfg['epochs']}]")
 
+        # --------------------------------------------------------------------------------
+        # [수정 7] main의 train_one_epoch 호출 시 num_classes=cfg['num_cls_classes'] 전달
+        # --------------------------------------------------------------------------------
         tr = train_one_epoch(cfg, train_loader, model, criterion, optimizer, scaler, 
                              amp_dtype, device, is_main, loss_weight=cfg['loss_weight'],
-                             cls_criterion=cls_criterion, sampler=train_sampler)
+                             cls_criterion=cls_criterion, num_classes=cfg['num_cls_classes'], 
+                             sampler=train_sampler)
+        
         va = validate_one_epoch(cfg, val_loader, model, criterion, amp_dtype, device, is_main, 
-                               num_classes=cfg['num_cls_classes'], loss_weight=cfg['loss_weight'],
-                               cls_criterion=cls_criterion)
+                                num_classes=cfg['num_cls_classes'], loss_weight=cfg['loss_weight'],
+                                cls_criterion=cls_criterion)
 
         if scheduler is not None:
             if isinstance(scheduler, lr_scheduler.ReduceLROnPlateau):
@@ -594,11 +661,24 @@ def main():
             log['epoch'].append(epoch)
             log['lr'].append(current_lrs)
             
+            # --------------------------------------------------------------------------------
+            # [수정 8] main의 log.append() 호출에 train classification metric 추가
+            # --------------------------------------------------------------------------------
             # Training metrics
             log['loss'].append(tr['loss'])
             log['seg_loss'].append(tr['seg_loss'])
             log['cls_loss'].append(tr['cls_loss'])
             log['iou'].append(tr['iou'])
+            log['auroc_avg'].append(tr['auroc_avg'])
+            log['auprc_avg'].append(tr['auprc_avg'])
+            log['f1_avg'].append(tr['f1_avg'])
+            log['accuracy'].append(tr['accuracy'])
+            log['auroc_class0'].append(tr['auroc_class0'])
+            log['auroc_class1'].append(tr['auroc_class1'])
+            log['auprc_class0'].append(tr['auprc_class0'])
+            log['auprc_class1'].append(tr['auprc_class1'])
+            log['f1_class0'].append(tr['f1_class0'])
+            log['f1_class1'].append(tr['f1_class1'])
             
             # Validation metrics
             log['val_loss'].append(va['loss'])
@@ -606,8 +686,6 @@ def main():
             log['val_cls_loss'].append(va['cls_loss'])
             log['val_iou'].append(va['iou'])
             log['val_dice'].append(va['dice'])
-            
-            # Classification metrics
             log['val_auroc_avg'].append(va['auroc_avg'])
             log['val_auprc_avg'].append(va['auprc_avg'])
             log['val_f1_avg'].append(va['f1_avg'])
@@ -621,12 +699,25 @@ def main():
             
             pd.DataFrame(log).to_csv(os.path.join(save_dir, 'log.csv'), index=False)
 
+            # --------------------------------------------------------------------------------
+            # [수정 9] main의 TensorBoard (tb) 로깅에 train classification metric 추가
+            # --------------------------------------------------------------------------------
             if tb is not None:
                 # Training
                 tb.add_scalar('train/loss', tr['loss'], epoch)
                 tb.add_scalar('train/seg_loss', tr['seg_loss'], epoch)
                 tb.add_scalar('train/cls_loss', tr['cls_loss'], epoch)
                 tb.add_scalar('train/iou', tr['iou'], epoch)
+                tb.add_scalar('train/auroc_avg', tr['auroc_avg'], epoch)
+                tb.add_scalar('train/auprc_avg', tr['auprc_avg'], epoch)
+                tb.add_scalar('train/f1_avg', tr['f1_avg'], epoch)
+                tb.add_scalar('train/accuracy', tr['accuracy'], epoch)
+                tb.add_scalar('train/auroc_class0', tr['auroc_class0'], epoch)
+                tb.add_scalar('train/auroc_class1', tr['auroc_class1'], epoch)
+                tb.add_scalar('train/auprc_class0', tr['auprc_class0'], epoch)
+                tb.add_scalar('train/auprc_class1', tr['auprc_class1'], epoch)
+                tb.add_scalar('train/f1_class0', tr['f1_class0'], epoch)
+                tb.add_scalar('train/f1_class1', tr['f1_class1'], epoch)
                 
                 # Validation - Segmentation
                 tb.add_scalar('val/loss', va['loss'], epoch)
