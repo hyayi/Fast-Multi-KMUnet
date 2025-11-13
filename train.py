@@ -477,7 +477,7 @@ def parse_args():
 
     # basics
     p.add_argument('--name', default=None)
-    p.add_overrideable('--epochs', default=300, type=int)
+    p.add_argument('--epochs', default=300, type=int)
     p.add_argument('-b', '--batch_size', default=16, type=int)
     p.add_argument('--num_workers', default=4, type=int)
     p.add_argument('--output_dir', default='outputs')
@@ -498,7 +498,7 @@ def parse_args():
     p.add_argument('--input_w', default=1024, type=int)
     p.add_argument('--input_h', default=1024, type=int)
     p.add_argument('--input_list', type=list_type, default=[128,160,256])
-    p.add_overrideable('--no_kan', action='store_true')
+    p.add_argument('--no_kan', action='store_true')
     
     # loss
     LOSS_NAMES = losses.__all__ + ['BCEWithLogitsLoss']
