@@ -121,8 +121,8 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
 
     train_tf = A.Compose([
         A.Resize(cfg['input_h'], cfg['input_w']),
-        A.RandomRotate90(),
-        A.HorizontalFlip(),
+        # A.RandomRotate90(),
+        # A.HorizontalFlip(),
         A.Normalize(),
     ])
     val_tf = A.Compose([
@@ -185,6 +185,8 @@ def build_optimizer(cfg, model):
     ]
     if cfg['optimizer'] == 'Adam':
         return optim.Adam(groups)
+    elif cfg['optimizer'] == 'AdamW':
+        return optim.AdamW(groups, lr=cfg['lr'], weight_decay=cfg['weight_decay'])
     return optim.SGD(groups, lr=cfg['lr'], momentum=cfg['momentum'],
                      nesterov=cfg['nesterov'], weight_decay=cfg['weight_decay'])
 
@@ -451,12 +453,12 @@ def parse_args():
     p.add_argument('--loss_weight', type=float, default=1.0)
 
     # optim
-    p.add_argument('--optimizer', default='Adam', choices=['Adam','SGD'])
+    p.add_argument('--optimizer', default='AdamW', choices=['AdamW','SGD',"Adam"])
     p.add_argument('--lr', default=1e-4, type=float)
     p.add_argument('--weight_decay', default=1e-4, type=float)
     p.add_argument('--momentum', default=0.9, type=float)
     p.add_argument('--nesterov', default=False, type=str2bool)
-    p.add_argument('--kan_lr', default=1e-2, type=float)
+    p.add_argument('--kan_lr', default=1e-4, type=float)
     p.add_argument('--kan_weight_decay', default=1e-4, type=float)
 
     # scheduler

@@ -107,7 +107,7 @@ if __name__ == "__main__":
         mask_ext='.nii.gz',
         num_classes=2,
         cls_df_path='/data/image/project/ng_tube/nnunet/data/metafile/Dataset3006_label_version_3.00(25.08.14).csv',
-        mode='train',
+        mode='val',
         transform=None
     )
     for img,mask,cls_target,info in iter(dataset):
