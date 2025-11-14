@@ -5,5 +5,6 @@ from archs import UKANCls
 from archs_token import UKANClsToken
 from archs_branch import UKANClsCNN
 from archs_no_mamba import UKANClsNoMamba
-__all__ = ['UKANCls','UKANClsToken','UKANClsCNN',"UKANClsNoMamba"]
+from archs_kmunet import KM_UNet
+__all__ = ['UKANCls','UKANClsToken','UKANClsCNN',"UKANClsNoMamba","KM_UNet"]
 
