@@ -26,7 +26,7 @@ from dataset import Dataset
 from metrics import iou_score
 from utils import AverageMeter, str2bool
 from tensorboardX import SummaryWriter
-
+from get_transforms import get_training_transforms, get_validation_transforms
 
 # ------------------------- Utils -------------------------
 
@@ -118,17 +118,16 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
         mask_ext = '.png'
     elif cfg['dataset'] == 'ngtube':
         mask_ext = '.nii.gz'
-
-    train_tf = A.Compose([
-        A.Resize(cfg['input_h'], cfg['input_w']),
-        # A.RandomRotate90(),
-        # A.HorizontalFlip(),
-        A.Normalize(),
-    ])
-    val_tf = A.Compose([
-        A.Resize(cfg['input_h'], cfg['input_w']),
-        A.Normalize(),
-    ])
+    rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
+    mirror_axes = (0, 1)
+    train_tf = get_training_transforms(
+        image_size=(cfg['input_h'], cfg['input_w']),
+        rotation_for_DA=rotation_for_DA,
+        mirror_axes=mirror_axes
+    )
+    val_tf = get_validation_transforms(
+        image_size=(cfg['input_h'], cfg['input_w'])
+    )
 
     train_ds = Dataset(cfg['image_dir'], cfg['mask_dir'],
                        img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],

@@ -7,7 +7,8 @@ import torch.utils.data
 import nibabel as nib
 import os
 import pandas as pd
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+import torch
+
 class Dataset(torch.utils.data.Dataset):
     def __init__(self,img_dir, mask_dir, img_ext, mask_ext, num_classes,cls_df_path,mode='train', transform=None):
         """
@@ -66,52 +67,107 @@ class Dataset(torch.utils.data.Dataset):
         cls_target = self.class_mapping_table[self.cls_df.iloc[idx]['class_new']]
 
         # 读取图像
-        img = nib.load(os.path.join(self.img_dir, img_id + self.img_ext)).get_fdata()[:,:,0]
-        img = img.astype('uint8')
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        
+        img = nib.load(os.path.join(self.img_dir, img_id + self.img_ext)).get_fdata()[:,:].transpose(2,0,1)
+        img = torch.tensor(img, dtype=torch.float32)
         # 读取掩码
-        mask = nib.load(os.path.join(self.mask_dir, img_id + self.mask_ext)).get_fdata()[:,:]
-        mask = mask.astype('uint8')
+        mask = nib.load(os.path.join(self.mask_dir, img_id + self.mask_ext)).get_fdata()[:,:].transpose(2,0,1)
+        mask = torch.tensor(mask, dtype=torch.float32)
 
         # 如果使用了数据增强，则应用变换
         if self.transform is not None:
-            augmented = self.transform(image=img, mask=mask)
+            augmented = self.transform(**{'image': img, 'segmentation': mask})
             img = augmented['image']
-            mask = augmented['mask']
-
-        # 归一化图像
-        img = img.astype('float32')
-        img = img.transpose(2, 0, 1)  # 将 HWC 转为 CHW
-
-        # 归一化掩码
-        mask = mask.astype('float32')
-        mask = mask.transpose(2, 0, 1)  # 将 HWC 转为 CHW
-
-        # 将掩码中的值转为 0 和 1
-        if mask.max() < 1:
-            mask[mask > 0] = 1.0
+            mask = augmented['segmentation']
 
         # 显式指定数据类型
-        img = torch.tensor(img, dtype=torch.float32)  # 转换为张量并指定数据类型
-        mask = torch.tensor(mask, dtype=torch.float32)  # 转换为张量并指定数据类型
         cls_target = torch.tensor(cls_target, dtype=torch.long)  # 分类目标张量
         return img, mask, cls_target, {'img_id': img_id}
 
 
 if __name__ == "__main__":
-    dataset = Dataset(
-        img_dir='/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/imagesTr',
-        mask_dir='/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/labelsTr',
-        img_ext='_0000.nii.gz',
-        mask_ext='.nii.gz',
-        num_classes=2,
-        cls_df_path='/data/image/project/ng_tube/nnunet/data/metafile/Dataset3006_label_version_3.00(25.08.14).csv',
-        mode='val',
-        transform=None
+    import matplotlib.pyplot as plt
+    try:
+        from get_transforms import get_training_transforms
+    except ImportError:
+        print("Could not import get_transforms.py. Make sure it exists.")
+        exit()
+
+    # --- 2. Setup (Modify paths as needed) ---
+    IMG_DIR = '/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/imagesTr'
+    MASK_DIR = '/data/image/project/ng_tube/nnunet/data/nnUNet_raw/Dataset3006_active_learning_3004base/labelsTr'
+    CSV_PATH = '/data/image/project/ng_tube/nnunet/data/metafile/Dataset3006_label_version_3.00(25.08.14).csv'
+    IMG_EXT = '_0000.nii.gz'
+    MASK_EXT = '.nii.gz'
+    MODE = 'val'
+    OUTPUT_DIR = '/workspace/debug_img' # Output directory for debug images
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # --- 3. Define 3D-mode transforms for batchgeneratorsv2 ---
+    # (이전 RuntimeError를 피하기 위해 3D 모드 사용)
+    rotation_for_DA = (-180. / 360 * 2. * np.pi, 180. / 360 * 2. * np.pi)
+    mirror_axes = (0, 1) # 2D mirror (H, W) -> (D, H, W) 3D 공간에서는 (1, 2)
+    
+    # 2D 이미지 크기를 3D 공간 (D, H, W)으로 정의합니다.
+    spatial_image_size = (1024, 1024) 
+    
+    transform = get_training_transforms(
+        image_size=spatial_image_size, 
+        rotation_for_DA=rotation_for_DA, 
+        mirror_axes=(0, 1) # (D, H, W)에서 H와 W축을 미러링
     )
-    for img,mask,cls_target,info in iter(dataset):
-        print(img.shape)
-        print(mask.shape)
-        print(cls_target)
-        print(info)
+
+    # --- 4. Create Dataset ---
+    dataset = Dataset(
+        img_dir=IMG_DIR,
+        mask_dir=MASK_DIR,
+        img_ext=IMG_EXT,
+        mask_ext=MASK_EXT,
+        num_classes=2,
+        cls_df_path=CSV_PATH,
+        mode=MODE,
+        transform=transform # batchgeneratorsv2 transform 전달
+    )
+
+    # --- 5. Loop and Save Debug Images ---
+    num_samples_to_check = 20
+    print(f"\n--- Starting Debug Image Generation (Saving to {OUTPUT_DIR}) ---")
+    
+    # DataLoader를 사용하지 않고 Dataset을 직접 순회
+    for i in range(min(num_samples_to_check, len(dataset))):
+        # __getitem__을 직접 호출하여 (C,H,W) 텐서를 받음
+        img_tensor, mask_tensor, cls_target, info = dataset[i]
+        
+        img_id = info['img_id']
+        class_name = 'complete' if cls_target.item() == 0 else 'incomplete'
+
+        # --- Convert Tensors to NumPy for plotting ---
+        # (1, H, W) -> (H, W)
+        image_slice = img_tensor.numpy().squeeze()
+        mask_slice = mask_tensor.numpy().squeeze()
+        
+        # --- Save 1: Augmented Image Only ---
+        save_path_img = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__image.png")
+        plt.figure(figsize=(10, 10))
+        # batchgenerators Normalize는 Z-score (평균 0, 표준 1)이므로
+        # vmin/vmax를 설정하여 대비를 명확하게 봅니다.
+        plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3) 
+        plt.title(f"Image Only\n{img_id} (Class: {class_name})")
+        plt.axis('off')
+        plt.savefig(save_path_img, bbox_inches='tight')
+        plt.close()
+
+        # --- Save 2: Image + Mask Overlay ---
+        save_path_overlay = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__overlay.png")
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3)
+        # 마스크를 반투명한 빨간색으로 오버레이
+        plt.imshow(mask_slice, cmap='Reds', alpha=0.3, vmin=0, vmax=1)
+        plt.title(f"Image + Mask Overlay\n{img_id} (Class: {class_name})")
+        plt.axis('off')
+        plt.savefig(save_path_overlay, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Saved debug images for {img_id} (Sample {i+1}/{num_samples_to_check})")
+
+
+    print(f"\n--- Debug Image Generation Finished ---")
