@@ -4,5 +4,5 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from archs import UKANCls
 from archs_token import UKANClsToken
 from archs_branch import UKANClsCNN
-__all__ = ['UKANCls','UKANClsToken','UKANClsCNN']
+__all__ = ['UKANCls','UKANClsToken','UKANClsCNN',"UKANClsNoMamba"]
 
