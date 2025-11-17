@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self,img_dir, mask_dir, img_ext, mask_ext, num_classes,cls_df_path,mode='train', transform=None):
+    def __init__(self,img_dir, mask_dir, img_ext, mask_ext, target_size,cls_df_path,mode='train', transform=None):
         """
         Args:
             img_ids (list): Image ids.
@@ -66,11 +66,28 @@ class Dataset(torch.utils.data.Dataset):
         img_id = self.cls_df.iloc[idx]['image']
         cls_target = self.class_mapping_table[self.cls_df.iloc[idx]['class_new']]
 
+        nii_img = nib.load(os.path.join(self.img_dir, img_id + self.img_ext))
+        nii_mask = nib.load(os.path.join(self.mask_dir, img_id + self.mask_ext))
+
+        orig_zooms = nii_img.header.get_zooms()
+        orig_shape = nii_img.shape
+
+        orig_sp_x, orig_sp_y = orig_zooms[0], orig_zooms[1]
+        orig_dim_x, orig_dim_y = orig_shape[0], orig_shape[1]
+
+        # 1024x1024로 변환 시 각 축의 스케일 비율 계산
+        # (원본 길이 / 목표 길이 1024)
+        scale_x = orig_dim_x / self.target_size[1]
+        scale_y = orig_dim_y / self.target_size[0]
+
+        # 변환된 Spacing 계산
+        new_sp_x = orig_sp_x * scale_x
+        new_sp_y = orig_sp_y * scale_y
         # 读取图像
-        img = nib.load(os.path.join(self.img_dir, img_id + self.img_ext)).get_fdata()[:,:].transpose(2,0,1)
+        img = nii_img.get_fdata()[:,:].transpose(2,0,1)
         img = torch.tensor(img, dtype=torch.float32)
         # 读取掩码
-        mask = nib.load(os.path.join(self.mask_dir, img_id + self.mask_ext)).get_fdata()[:,:].transpose(2,0,1)
+        mask = nii_mask.get_fdata()[:,:].transpose(2,0,1)
         mask = torch.tensor(mask, dtype=torch.float32)
 
         # 如果使用了数据增强，则应用变换
@@ -80,8 +97,9 @@ class Dataset(torch.utils.data.Dataset):
             mask = augmented['segmentation']
 
         # 显式指定数据类型
+        spacing_tensor = torch.tensor([new_sp_x, new_sp_y], dtype=torch.float32)
         cls_target = torch.tensor(cls_target, dtype=torch.long)  # 分类目标张量
-        return img, mask, cls_target, {'img_id': img_id}
+        return img, mask, cls_target,spacing_tensor, {'img_id': img_id}
 
 
 if __name__ == "__main__":

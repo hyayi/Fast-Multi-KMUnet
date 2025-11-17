@@ -130,10 +130,10 @@ def make_dataloaders(cfg, distributed, img_ext='_0000.nii.gz', mask_ext='.png'):
     )
 
     train_ds = Dataset(cfg['image_dir'], cfg['mask_dir'],
-                       img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
+                       img_ext, mask_ext, target_size=(cfg['input_h'], cfg['input_w']),cls_df_path=cfg['cls_df_path'],
                        transform=train_tf,mode="train")
     val_ds   = Dataset(cfg['image_dir'], cfg['mask_dir'],
-                       img_ext, mask_ext, num_classes=cfg['num_classes'],cls_df_path=cfg['cls_df_path'],
+                       img_ext, mask_ext, target_size=(cfg['input_h'], cfg['input_w']),cls_df_path=cfg['cls_df_path'],
                        transform=val_tf, mode="val")
 
     dl_common = dict(batch_size=cfg['batch_size'], pin_memory=True)
@@ -245,21 +245,28 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
     pbar = tqdm(total=len(loader)) if is_main else None
     autocast_enabled = amp_dtype is not None
     
-    for x, y, cls_y, _ in loader:
+    for x, y, cls_y,spacing, _ in loader:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         cls_y = cls_y.to(device, non_blocking=True)
+        spacing = spacing.to(device, non_blocking=True)
         
         optimizer.zero_grad(set_to_none=True)
 
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                out, cls_out = model(x)
+                if cfg['arch'] in ['UKANClsSSPScale']:
+                    out, cls_out = model(x,spacing)
+                else:
+                    out, cls_out = model(x)
                 cls_loss = cls_criterion(cls_out, cls_y)
                 seg_loss = criterion(out, y)
                 loss = seg_loss + loss_weight*cls_loss
         else:
-            out, cls_out = model(x)
+            if cfg['arch'] in ['UKANClsSSPScale']:
+                out, cls_out = model(x,spacing)
+            else:
+                out, cls_out = model(x)
             cls_loss = cls_criterion(cls_out, cls_y)
             seg_loss = criterion(out, y)
             loss = seg_loss + loss_weight*cls_loss
@@ -374,19 +381,26 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
     pbar = tqdm(total=len(loader)) if is_main else None
     autocast_enabled = amp_dtype is not None
 
-    for x, y, cls_y, _ in loader:
+    for x, y, cls_y,spacing, _ in loader:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
         cls_y = cls_y.to(device, non_blocking=True)
-        
+        spacing = spacing.to(device, non_blocking=True)
+
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                out, cls_out = model(x)
+                if cfg['arch'] in ['UKANClsSSPScale']:
+                    out, cls_out = model(x,spacing)
+                else:
+                    out, cls_out = model(x)
                 cls_loss = cls_criterion(cls_out, cls_y)
                 seg_loss = criterion(out, y)
                 loss = seg_loss + loss_weight*cls_loss
         else:
-            out, cls_out = model(x)
+            if cfg['arch'] in ['UKANClsSSPScale']:
+                out, cls_out = model(x,spacing)
+            else:
+                out, cls_out = model(x)
             cls_loss = cls_criterion(cls_out, cls_y)
             seg_loss = criterion(out, y)
             loss = seg_loss + loss_weight*cls_loss
