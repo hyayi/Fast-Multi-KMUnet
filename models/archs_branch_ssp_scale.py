@@ -502,7 +502,7 @@ from torch import nn
     
 # 添加ss2d块
 
-class UKANClsSSP(nn.Module):
+class UKANClsSSPScale(nn.Module):
     def __init__(self, num_classes, input_channels=3, deep_supervision=False, img_size=224, patch_size=16, in_chans=3, embed_dims=[256, 320, 512], no_kan=False,
     drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[1, 1, 1],num_cls_classes=2, **kwargs):
         super().__init__()
