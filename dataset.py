@@ -51,6 +51,7 @@ class Dataset(torch.utils.data.Dataset):
         self.transform = transform
         self.cls_df = self._load_df(cls_df_path,mode)
         self.class_mapping_table = {'complete':0, 'incomplete':1}
+        self.target_size = target_size
 
     def _load_df(self,cls_df_path,mode):
         cls_df = pd.read_csv(cls_df_path)
