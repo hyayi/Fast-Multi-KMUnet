@@ -141,52 +141,59 @@ if __name__ == "__main__":
         mask_dir=MASK_DIR,
         img_ext=IMG_EXT,
         mask_ext=MASK_EXT,
-        num_classes=2,
         cls_df_path=CSV_PATH,
         mode=MODE,
+        target_size=(1024, 1024),
         transform=transform # batchgeneratorsv2 transform 전달
     )
 
     # --- 5. Loop and Save Debug Images ---
-    num_samples_to_check = 20
-    print(f"\n--- Starting Debug Image Generation (Saving to {OUTPUT_DIR}) ---")
+    result = []
+    for _,_,_,spacing_tensor, _ in dataset:
+        result.append(spacing_tensor.numpy())
+        print(spacing_tensor.numpy())
+    result = np.array(result)
+    print("Spacing Mean:", np.max(result, axis=0))
+
+    # num_samples_to_check = 20
+    # print(f"\n--- Starting Debug Image Generation (Saving to {OUTPUT_DIR}) ---")
     
-    # DataLoader를 사용하지 않고 Dataset을 직접 순회
-    for i in range(min(num_samples_to_check, len(dataset))):
-        # __getitem__을 직접 호출하여 (C,H,W) 텐서를 받음
-        img_tensor, mask_tensor, cls_target, info = dataset[i]
+    # # DataLoader를 사용하지 않고 Dataset을 직접 순회
+    # for i in range(min(num_samples_to_check, len(dataset))):
+    #     # __getitem__을 직접 호출하여 (C,H,W) 텐서를 받음
+    #     img_tensor, mask_tensor, cls_target, info = dataset[i]
         
-        img_id = info['img_id']
-        class_name = 'complete' if cls_target.item() == 0 else 'incomplete'
+    #     img_id = info['img_id']
+    #     class_name = 'complete' if cls_target.item() == 0 else 'incomplete'
 
-        # --- Convert Tensors to NumPy for plotting ---
-        # (1, H, W) -> (H, W)
-        image_slice = img_tensor.numpy().squeeze()
-        mask_slice = mask_tensor.numpy().squeeze()
+    #     # --- Convert Tensors to NumPy for plotting ---
+    #     # (1, H, W) -> (H, W)
+    #     image_slice = img_tensor.numpy().squeeze()
+    #     mask_slice = mask_tensor.numpy().squeeze()
         
-        # --- Save 1: Augmented Image Only ---
-        save_path_img = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__image.png")
-        plt.figure(figsize=(10, 10))
-        # batchgenerators Normalize는 Z-score (평균 0, 표준 1)이므로
-        # vmin/vmax를 설정하여 대비를 명확하게 봅니다.
-        plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3) 
-        plt.title(f"Image Only\n{img_id} (Class: {class_name})")
-        plt.axis('off')
-        plt.savefig(save_path_img, bbox_inches='tight')
-        plt.close()
+    #     # --- Save 1: Augmented Image Only ---
+    #     save_path_img = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__image.png")
+    #     plt.figure(figsize=(10, 10))
+    #     # batchgenerators Normalize는 Z-score (평균 0, 표준 1)이므로
+    #     # vmin/vmax를 설정하여 대비를 명확하게 봅니다.
+    #     plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3) 
+    #     plt.title(f"Image Only\n{img_id} (Class: {class_name})")
+    #     plt.axis('off')
+    #     plt.savefig(save_path_img, bbox_inches='tight')
+    #     plt.close()
 
-        # --- Save 2: Image + Mask Overlay ---
-        save_path_overlay = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__overlay.png")
-        plt.figure(figsize=(10, 10))
-        plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3)
-        # 마스크를 반투명한 빨간색으로 오버레이
-        plt.imshow(mask_slice, cmap='Reds', alpha=0.3, vmin=0, vmax=1)
-        plt.title(f"Image + Mask Overlay\n{img_id} (Class: {class_name})")
-        plt.axis('off')
-        plt.savefig(save_path_overlay, bbox_inches='tight')
-        plt.close()
+    #     # --- Save 2: Image + Mask Overlay ---
+    #     save_path_overlay = os.path.join(OUTPUT_DIR, f"{img_id}__{class_name}__overlay.png")
+    #     plt.figure(figsize=(10, 10))
+    #     plt.imshow(image_slice, cmap='gray', vmin=-3, vmax=3)
+    #     # 마스크를 반투명한 빨간색으로 오버레이
+    #     plt.imshow(mask_slice, cmap='Reds', alpha=0.3, vmin=0, vmax=1)
+    #     plt.title(f"Image + Mask Overlay\n{img_id} (Class: {class_name})")
+    #     plt.axis('off')
+    #     plt.savefig(save_path_overlay, bbox_inches='tight')
+    #     plt.close()
         
-        print(f"Saved debug images for {img_id} (Sample {i+1}/{num_samples_to_check})")
+    #     print(f"Saved debug images for {img_id} (Sample {i+1}/{num_samples_to_check})")
 
 
-    print(f"\n--- Debug Image Generation Finished ---")
+    # print(f"\n--- Debug Image Generation Finished ---")

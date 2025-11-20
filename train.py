@@ -255,7 +255,7 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
 
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                if cfg['arch'] in ['UKANClsSSPScale']:
+                if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSPScaleMLK"]:
                     out, cls_out = model(x,spacing)
                 else:
                     out, cls_out = model(x)
@@ -263,7 +263,7 @@ def train_one_epoch(cfg, loader, model, criterion, optimizer, scaler, amp_dtype,
                 seg_loss = criterion(out, y)
                 loss = seg_loss + loss_weight*cls_loss
         else:
-            if cfg['arch'] in ['UKANClsSSPScale']:
+            if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSPScaleMLK"]:
                 out, cls_out = model(x,spacing)
             else:
                 out, cls_out = model(x)
