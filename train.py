@@ -512,6 +512,9 @@ def parse_args():
     p.add_argument('--input_h', default=1024, type=int)
     p.add_argument('--input_list', type=list_type, default=[128,160,256])
     p.add_argument('--no_kan', action='store_true')
+    p.add_argument('--reduction', type=int, default=16)
+    p.add_argument('--pooling_sizes', type=list_type, default=[1,2,4])
+
     
     # loss
     LOSS_NAMES = losses.__all__ + ['BCEWithLogitsLoss']
@@ -577,10 +580,17 @@ def main():
 
     # 모델/손실/옵티마/스케줄러
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-    model = models.__dict__[cfg['arch']](
-        cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
-        embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes']
-    ).to(device)
+    if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSP"]:
+        model = models.__dict__[cfg['arch']](
+            cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
+            embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes'],
+            reduction=cfg['reduction'], pooling_sizes=cfg['pooling_sizes']
+        ).to(device)
+    else:
+        model = models.__dict__[cfg['arch']](
+            cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
+            embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes']
+        ).to(device)
     criterion = build_criterion(cfg['loss'])
     cls_criterion = nn.CrossEntropyLoss().to(device)
     optimizer = build_optimizer(cfg, model)

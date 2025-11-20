@@ -47,7 +47,7 @@ try:
 except:
     pass
 
-__all__ = ['UKANClsSSPScale']
+__all__ = ['UKANClsSSPScaleMLK']
 
 class CoordAtt(nn.Module):
     def __init__(self, inp, oup, reduction=32):
@@ -130,11 +130,11 @@ class MultiTask_Classifier_Head(nn.Module):
             nn.BatchNorm2d(reduced_channels),
             nn.ReLU()
         )
-        self.meta_net = nn.Sequential(
-                    nn.Linear(2, 32),
-                    nn.ReLU(),
-                    nn.Linear(32, reduced_channels * 2) # Gamma(128) + Beta(128)
-                )
+        # self.meta_net = nn.Sequential(
+        #             nn.Linear(2, 32),
+        #             nn.ReLU(),
+        #             nn.Linear(32, reduced_channels * 2) # Gamma(128) + Beta(128)
+        #         )
         
         # Step 2: Coordinate Attention (위치 정보 강화)
         # reduction=16: 내부에서 128->8로 압축했다가 복구 (효율적)
@@ -147,11 +147,20 @@ class MultiTask_Classifier_Head(nn.Module):
         # Input Dim 계산: 128 * (1 + 16 + 64) = 128 * 81 = 10,368
         spp_output_dim = reduced_channels * (sum([size * size for size in pooling_sizes]))
         print(f"[Init] SPP Output Dim: {spp_output_dim},{reduced_channels} ")
-        
+        self.input_dim = spp_output_dim + 2  # spacing 1개 추가
         self.classifier = nn.Sequential(
-            nn.BatchNorm1d(spp_output_dim),
+            # [Layer 1]
+            KANLinear(self.input_dim, 512),
+            nn.LayerNorm(512), # KAN의 출력을 다음 층을 위해 정리 (Grid 범위 맞춤)
             nn.Dropout(0.2),
-            KANLinear(spp_output_dim, num_classes), 
+            
+            # [Layer 2]
+            KANLinear(512, 256),
+            nn.LayerNorm(256), # 마찬가지로 정리
+            nn.Dropout(0.2),
+            
+            # [Layer 3 - Output]
+            KANLinear(256, num_classes)
         )
         # self.classifier = nn.Sequential(
         #     # ----------------------------------------------------------
@@ -172,23 +181,12 @@ class MultiTask_Classifier_Head(nn.Module):
             # (1) Reduce Channels
             x = self.reducer(x) # [B, 128, 32, 32]
             
-            # (2) Feature Modulation (핵심!) ---------------------------
-            # Spacing 값으로 Scale(gamma)과 Shift(beta)를 예측
-            stats = self.meta_net(spacing) # [B, 256]
-            gamma, beta = stats.chunk(2, dim=1) # 각각 [B, 128]
-            
-            # 차원 맞추기: [B, 128] -> [B, 128, 1, 1]
-            gamma = gamma.unsqueeze(2).unsqueeze(3)
-            beta = beta.unsqueeze(2).unsqueeze(3)
-            
-            # Affine Transformation 적용: (Feature * Scale) + Shift
-            # 1.0을 더해주는 이유는 초기 학습 시 gamma가 0 근처일 때 특징이 사라지는 것 방지
-            x = x * (1.0 + gamma) + beta 
             # ----------------------------------------------------------
             
             # (3) Attention & Pooling & Classification
             x = self.ca(x)
             x = self.spp(x)
+            x = torch.cat([x, spacing], dim=1)
             x = self.classifier(x)
             
             return x
@@ -502,7 +500,7 @@ from torch import nn
     
 # 添加ss2d块
 
-class UKANClsSSPScale(nn.Module):
+class UKANClsSSPScaleMLK(nn.Module):
     def __init__(self, num_classes, input_channels=3, deep_supervision=False, img_size=224, patch_size=16, in_chans=3, embed_dims=[256, 320, 512], no_kan=False,
     drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[1, 1, 1],num_cls_classes=2,pooling_sizes=[1,2,4],reduction=16, **kwargs):
         super().__init__()
@@ -660,7 +658,7 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     # 2. 모델 초기화 및 장치로 이동
-    model = UKANClsSSPScale(num_classes=2, input_channels=1, img_size=1024, patch_size=16, in_chans=3,
+    model = UKANClsSSPScaleMLP(num_classes=2, input_channels=1, img_size=1024, patch_size=16, in_chans=3,
       embed_dims=[128, 160, 256], num_cls_classes=2, pooling_sizes=[1,2,4], reduction=16)
     model.to(device)
     model.eval() # 추론 모드로 설정 (Dropout 등 비활성화)
