@@ -389,7 +389,7 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
 
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                if cfg['arch'] in ['UKANClsSSPScale']:
+                if cfg['arch'] in ['UKANClsSSPScale','UKANClsSSPScaleMLK']:
                     out, cls_out = model(x,spacing)
                 else:
                     out, cls_out = model(x)
@@ -397,7 +397,7 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
                 seg_loss = criterion(out, y)
                 loss = seg_loss + loss_weight*cls_loss
         else:
-            if cfg['arch'] in ['UKANClsSSPScale']:
+            if cfg['arch'] in ['UKANClsSSPScale','UKANClsSSPScaleMLK']:
                 out, cls_out = model(x,spacing)
             else:
                 out, cls_out = model(x)
