@@ -150,8 +150,10 @@ class MultiTask_Classifier_Head(nn.Module):
         
         self.classifier = nn.Sequential(
             nn.BatchNorm1d(spp_output_dim),
+            KANLinear(spp_output_dim, spp_output_dim//2),
+            nn.BatchNorm1d(spp_output_dim//2)
             nn.Dropout(0.2),
-            KANLinear(spp_output_dim, num_classes), 
+            KANLinear(spp_output_dim//2, num_classes)      
         )
         # self.classifier = nn.Sequential(
         #     # ----------------------------------------------------------
