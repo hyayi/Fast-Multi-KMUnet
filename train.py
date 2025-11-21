@@ -774,7 +774,7 @@ def main():
                       best_iou, best_dice, best_auroc, best_auprc, best_f1, cfg)
 
         # 베스트 모델 저장 (Dice 기준, rank0만)
-        if is_main and va['dice'] > best_dice:
+        if is_main and va['auroc_avg'] > best_auroc:
             best_iou = va['iou']
             best_dice = va['dice']
             best_auroc = va['auroc_avg']
