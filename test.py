@@ -328,7 +328,7 @@ def main():
         drop_last=False
     )
 
-    # Output directory
+    # Output directory setup
     if args.output_dir:
         output_dir = args.output_dir
     else:
@@ -343,37 +343,60 @@ def main():
         output_dir=output_dir
     )
 
-    # Print results
-    print("\n" + "=" * 60)
-    print("TEST RESULTS")
-    print("=" * 60)
-    print("\nSegmentation Metrics:")
-    print(f"  IoU:  {results['iou']:.4f}")
-    print(f"  Dice: {results['dice']:.4f}")
-    print(f"  HD95: {results['hd95']:.4f}")
+    # ---------------------------------------------------------
+    # Generate and Save Report
+    # ---------------------------------------------------------
+    
+    # 1. Construct the result string
+    log_message = []
+    log_message.append("\n" + "=" * 60)
+    log_message.append("TEST RESULTS")
+    log_message.append("=" * 60)
+    
+    log_message.append("\nSegmentation Metrics:")
+    log_message.append(f"  IoU:  {results['iou']:.4f}")
+    log_message.append(f"  Dice: {results['dice']:.4f}")
+    log_message.append(f"  HD95: {results['hd95']:.4f}")
 
-    print("\nClassification Metrics (Macro Average):")
-    print(f"  AUROC:    {results['auroc_avg']:.4f}")
-    print(f"  AUPRC:    {results['auprc_avg']:.4f}")
-    print(f"  F1:       {results['f1_avg']:.4f}")
-    print(f"  Accuracy: {results['accuracy']:.4f}")
+    log_message.append("\nClassification Metrics (Macro Average):")
+    log_message.append(f"  AUROC:    {results['auroc_avg']:.4f}")
+    log_message.append(f"  AUPRC:    {results['auprc_avg']:.4f}")
+    log_message.append(f"  F1:       {results['f1_avg']:.4f}")
+    log_message.append(f"  Accuracy: {results['accuracy']:.4f}")
 
-    print("\nPer-Class Metrics:")
-    print(f"  Class 0 (Complete):   AUROC={results['auroc_class0']:.4f}, AUPRC={results['auprc_class0']:.4f}, F1={results['f1_class0']:.4f}")
-    print(f"  Class 1 (Incomplete): AUROC={results['auroc_class1']:.4f}, AUPRC={results['auprc_class1']:.4f}, F1={results['f1_class1']:.4f}")
+    log_message.append("\nPer-Class Metrics:")
+    log_message.append(f"  Class 0 (Complete):   AUROC={results['auroc_class0']:.4f}, AUPRC={results['auprc_class0']:.4f}, F1={results['f1_class0']:.4f}")
+    log_message.append(f"  Class 1 (Incomplete): AUROC={results['auroc_class1']:.4f}, AUPRC={results['auprc_class1']:.4f}, F1={results['f1_class1']:.4f}")
 
-    print("\nConfusion Matrix:")
-    print(f"  Predicted ->")
-    print(f"  Actual v    Complete  Incomplete")
-    print(f"  Complete      {int(conf_matrix[0, 0]):5d}      {int(conf_matrix[0, 1]):5d}")
-    print(f"  Incomplete    {int(conf_matrix[1, 0]):5d}      {int(conf_matrix[1, 1]):5d}")
+    log_message.append("\nConfusion Matrix:")
+    log_message.append(f"  Predicted ->")
+    log_message.append(f"  Actual v    Complete  Incomplete")
+    log_message.append(f"  Complete      {int(conf_matrix[0, 0]):5d}      {int(conf_matrix[0, 1]):5d}")
+    log_message.append(f"  Incomplete    {int(conf_matrix[1, 0]):5d}      {int(conf_matrix[1, 1]):5d}")
 
-    print(f"\nTotal samples: {results['n_samples']}")
-    print("=" * 60)
+    log_message.append(f"\nTotal samples: {results['n_samples']}")
+    log_message.append("=" * 60)
+    
+    # Join list into a single string
+    full_report = "\n".join(log_message)
+
+    # 2. Print to console
+    print(full_report)
+
+    # 3. Save to file
+    # Ensure directory exists (might not exist if save_predictions was False)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    report_path = os.path.join(output_dir, 'test_report.txt')
+    with open(report_path, 'w') as f:
+        f.write(full_report)
+    
+    print(f"\n[Info] Full test report saved to: {report_path}")
 
     if args.save_predictions:
-        print(f"\nResults saved to: {output_dir}")
+        print(f"[Info] Detailed predictions saved to: {output_dir}")
 
 
 if __name__ == '__main__':
     main()
+
