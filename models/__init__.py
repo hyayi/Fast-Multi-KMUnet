@@ -9,5 +9,6 @@ from archs_kmunet import KM_UNet
 from archs_branch_ssp import UKANClsSSP
 from archs_branch_ssp_scale import UKANClsSSPScale
 from archs_branch_ssp_scale_multi_kan import UKANClsSSPScaleMLK
-__all__ = ['UKANCls','UKANClsToken','UKANClsCNN',"UKANClsNoMamba","KM_UNet","UKANClsSSP","UKANClsSSPScale","UKANClsSSPScaleMLK"]
+from archs_branch_ssp_scale_multi_mlp import UKANClsSSPScaleMLP
+__all__ = ['UKANCls','UKANClsToken','UKANClsCNN',"UKANClsNoMamba","KM_UNet","UKANClsSSP","UKANClsSSPScale","UKANClsSSPScaleMLK","UKANClsSSPScaleMLP"]
 
