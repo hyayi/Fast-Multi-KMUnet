@@ -119,7 +119,7 @@ class SpatialPyramidPooling(nn.Module):
 #    (Reducer -> CA -> SPP -> Linear)
 # ---------------------------------------------------------
 class MultiTask_Classifier_Head(nn.Module):
-    def __init__(self, in_channels=256, reduced_channels=128, num_classes=2, pooling_sizes=[1, 2, 4], reduction=16, spacing_dim=1):
+    def __init__(self, in_channels=256, reduced_channels=128, num_classes=2, pooling_sizes=[1, 2, 4], reduction=16, spacing_dim=2):
         super(MultiTask_Classifier_Head, self).__init__()
         
         # Step 1: Channel Reduction
