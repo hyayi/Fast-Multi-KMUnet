@@ -47,7 +47,7 @@ try:
 except:
     pass
 
-__all__ = ['UKANClsSSPScaleMLP']
+__all__ = ['UKANClsSSPScaleMLPAffine']
 
 class CoordAtt(nn.Module):
     def __init__(self, inp, oup, reduction=32):
@@ -147,13 +147,22 @@ class MultiTask_Classifier_Head(nn.Module):
         # Input Dim 계산: 128 * (1 + 16 + 64) = 128 * 81 = 10,368
         spp_output_dim = reduced_channels * (sum([size * size for size in pooling_sizes]))
         print(f"[Init] SPP Output Dim: {spp_output_dim},{reduced_channels} ")
-        
+
         self.classifier = nn.Sequential(
-            nn.BatchNorm1d(spp_output_dim),
-            KANLinear(spp_output_dim, spp_output_dim//2),
-            nn.BatchNorm1d(spp_output_dim//2),
+            # [Layer 1]
+            nn.Linear(spp_output_dim, 512),
+            nn.LayerNorm(512),      # Linear 출력(512)에 맞춰 정규화
+            nn.GELU(),              # ReLU보다 표현력이 좋은 GELU 사용
             nn.Dropout(0.2),
-            KANLinear(spp_output_dim//2, num_classes)      
+            
+            # [Layer 2]
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            
+            # [Layer 3 - Output]
+            nn.Linear(256, num_classes)
         )
         # self.classifier = nn.Sequential(
         #     # ----------------------------------------------------------
