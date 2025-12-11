@@ -119,62 +119,81 @@ class SpatialPyramidPooling(nn.Module):
 #    (Reducer -> CA -> SPP -> Linear)
 # ---------------------------------------------------------
 class MultiTask_Classifier_Head(nn.Module):
-    def __init__(self, in_channels=256, reduced_channels=128, num_classes=2, pooling_sizes=[1, 2, 4], reduction=16, spacing_dim=1):
+    def __init__(self, in_channels=256, reduced_channels=128, num_classes=2,pooling_sizes=[1,2,4],reduction=16):
         super(MultiTask_Classifier_Head, self).__init__()
         
-        # Step 1: Channel Reduction
+        # print(f"[Init] Classifier Head: Input({in_channels}) -> Reduce({reduced_channels}) -> SPP[1,4,8]")
+
+        # Step 1: Channel Reduction (파라미터 절약)
         self.reducer = nn.Sequential(
             nn.Conv2d(in_channels, reduced_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(reduced_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU()
         )
+        self.meta_net = nn.Sequential(
+                    nn.Linear(2, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, reduced_channels * 2) # Gamma(128) + Beta(128)
+                )
         
-        # Step 2: Coordinate Attention
+        # Step 2: Coordinate Attention (위치 정보 강화)
+        # reduction=16: 내부에서 128->8로 압축했다가 복구 (효율적)
         self.ca = CoordAtt(reduced_channels, reduced_channels, reduction=reduction)
         
-        # Step 3: SPP
+        # Step 3: SPP (세밀한 공간 정보 수집)
         self.spp = SpatialPyramidPooling(pool_sizes=pooling_sizes)
         
         # Step 4: Classification Layers
-        # SPP Output Dim 계산
+        # Input Dim 계산: 128 * (1 + 16 + 64) = 128 * 81 = 10,368
         spp_output_dim = reduced_channels * (sum([size * size for size in pooling_sizes]))
+        print(f"[Init] SPP Output Dim: {spp_output_dim},{reduced_channels} ")
         
-        # 입력 차원: SPP 결과 + Spacing 정보
-        # 주의: spacing이 [B, 1]이면 +1, [B, 2]면 +2여야 합니다. (코드상 spacing 1개라고 하셔서 +1로 가정했으나, 필요시 수정)
-        self.input_dim = spp_output_dim + spacing_dim 
-        
-        print(f"[Init] Classifier Input Dim: {self.input_dim}")
-
         self.classifier = nn.Sequential(
-            # [Layer 1]
-            nn.Linear(self.input_dim, 512),
-            nn.LayerNorm(512),      # Linear 출력(512)에 맞춰 정규화
-            nn.GELU(),              # ReLU보다 표현력이 좋은 GELU 사용
+            nn.BatchNorm1d(spp_output_dim),
+            KANLinear(spp_output_dim, spp_output_dim//2),
+            nn.BatchNorm1d(spp_output_dim//2),
             nn.Dropout(0.2),
-            
-            # [Layer 2]
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            
-            # [Layer 3 - Output]
-            nn.Linear(256, num_classes)
+            KANLinear(spp_output_dim//2, num_classes)      
         )
+        # self.classifier = nn.Sequential(
+        #     # ----------------------------------------------------------
+        #     # TIP: KANLinear 사용 시 아래 nn.Linear 대신 교체하세요.
+        #     # ex) KANLinear(spp_output_dim, 64)  <-- Hidden Dim 줄일 것!
+        #     # ----------------------------------------------------------
+        #     nn.Linear(spp_output_dim, 256), 
+        #     nn.BatchNorm1d(256),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.5), # 파라미터가 5M 정도 되므로 Dropout 필수
+        #     nn.Linear(256, num_classes)
+        # )
 
     def forward(self, x, spacing):
-        # x: [Batch, 256, H, W]
-        # spacing: [Batch, spacing_dim]
-        
-        x = self.reducer(x)
-        x = self.ca(x)
-        x = self.spp(x) # Result: [Batch, spp_output_dim]
-        
-        # Spacing 정보 결합
-        x = torch.cat([x, spacing], dim=1) 
-        
-        x = self.classifier(x)
-        return x
+            # x: [Batch, 256, 32, 32]
+            # spacing: [Batch, 1] (단위: mm/pixel 등)
+            
+            # (1) Reduce Channels
+            x = self.reducer(x) # [B, 128, 32, 32]
+            
+            # (2) Feature Modulation (핵심!) ---------------------------
+            # Spacing 값으로 Scale(gamma)과 Shift(beta)를 예측
+            stats = self.meta_net(spacing) # [B, 256]
+            gamma, beta = stats.chunk(2, dim=1) # 각각 [B, 128]
+            
+            # 차원 맞추기: [B, 128] -> [B, 128, 1, 1]
+            gamma = gamma.unsqueeze(2).unsqueeze(3)
+            beta = beta.unsqueeze(2).unsqueeze(3)
+            
+            # Affine Transformation 적용: (Feature * Scale) + Shift
+            # 1.0을 더해주는 이유는 초기 학습 시 gamma가 0 근처일 때 특징이 사라지는 것 방지
+            x = x * (1.0 + gamma) + beta 
+            # ----------------------------------------------------------
+            
+            # (3) Attention & Pooling & Classification
+            x = self.ca(x)
+            x = self.spp(x)
+            x = self.classifier(x)
+            
+            return x
 
 
 class KANLayer(nn.Module):
