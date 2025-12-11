@@ -389,7 +389,7 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
 
         if autocast_enabled:
             with torch.autocast(device_type="cuda", dtype=amp_dtype):
-                if cfg['arch'] in ['UKANClsSSPScale','UKANClsSSPScaleMLK']:
+                if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSP","UKANClsSSPScaleMLPAffine","UKANClsSSPScaleMLK","UKANClsSSPScaleMLP"]:
                     out, cls_out = model(x,spacing)
                 else:
                     out, cls_out = model(x)
@@ -397,7 +397,7 @@ def validate_one_epoch(cfg, loader, model, criterion, amp_dtype, device, is_main
                 seg_loss = criterion(out, y)
                 loss = seg_loss + loss_weight*cls_loss
         else:
-            if cfg['arch'] in ['UKANClsSSPScale','UKANClsSSPScaleMLK']:
+            if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSP","UKANClsSSPScaleMLPAffine","UKANClsSSPScaleMLK","UKANClsSSPScaleMLP"]:
                 out, cls_out = model(x,spacing)
             else:
                 out, cls_out = model(x)
@@ -580,7 +580,7 @@ def main():
 
     # 모델/손실/옵티마/스케줄러
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-    if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSP"]:
+    if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSP","UKANClsSSPScaleMLPAffine","UKANClsSSPScaleMLK","UKANClsSSPScaleMLP"]:
         model = models.__dict__[cfg['arch']](
             cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
             embed_dims=cfg['input_list'], no_kan=cfg['no_kan'], num_cls_classes=cfg['num_cls_classes'],
