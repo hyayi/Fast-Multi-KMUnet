@@ -102,7 +102,7 @@ def test(cfg, loader, model, device, num_classes=2, save_predictions=False, outp
         spacing = spacing.to(device, non_blocking=True)
 
         # Forward pass
-        if cfg['arch'] in ['UKANClsSSPScale', 'UKANClsSSPScaleMLK']:
+        if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSPScaleMLK","UKANClsSSPScaleMLP","UKANClsSSPScaleMLPAffine"]:
             seg_out, cls_out = model(x, spacing)
         else:
             seg_out, cls_out = model(x)
@@ -277,7 +277,7 @@ def main():
 
     # Build model from config
     print(f"Building model: {cfg['arch']}")
-    if cfg['arch'] in ['UKANClsSSPScale', 'UKANClsSSP',"UKANClsSSPScaleMLK","UKANClsSSPScaleMLP"]:
+    if cfg['arch'] in ['UKANClsSSPScale',"UKANClsSSPScaleMLK","UKANClsSSPScaleMLP","UKANClsSSPScaleMLPAffine"]:
         model = models.__dict__[cfg['arch']](
             cfg['num_classes'], cfg['input_channels'], cfg['deep_supervision'],
             embed_dims=cfg['input_list'], no_kan=cfg.get('no_kan', False),
