@@ -1,0 +1,46 @@
+# PyTorch CPU 버전용 인덱스 URL
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core Dependencies
+# Python 3.12는 setuptools가 내장되어 있지 않아, 오래된 패키지(medpy 등) 설치 시 필요할 수 있음
+setuptools
+addict>=2.4.0
+pandas>=2.0.0
+pyyaml
+tqdm
+tensorboardX
+# Python 3.12 호환성을 위해 numpy 1.26.4 유지 (2.0은 아직 호환성 이슈 가능성 있음)
+numpy==1.26.4
+opencv-python-headless
+# perceptual은 오래된 라이브러리라 설치 실패 가능성 있음 (소스 빌드 필요할 수 있음)
+perceptual
+# Pillow 8.4.0은 Python 3.12 설치 불가 -> 10.x 이상 필수
+pillow>=10.2.0
+# tifffile 2020 버전은 설치 불가 -> 최신 버전 권장
+tifffile>=2023.8.12
+yapf>=0.40.0
+matplotlib
+einops
+nibabel
+medpy
+
+# Augmentation
+# 중요: albumentations 0.5.2는 Python 3.12에서 빌드 실패 확률 매우 높음 (의존성 문제)
+# Python 3.12를 쓰려면 최신 버전 사용을 강력 권장합니다.
+albumentations>=1.4.0
+
+# Deep Learning Utils
+timm
+torchmetrics
+batchgeneratorsv2
+acvl-utils
+
+# PyTorch (CPU Only)
+# Python 3.12 지원은 PyTorch 2.2.0부터 시작됨
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+
+# OpenVINO & Quantization
+openvino>=2024.0
+nncf>=2.10.0
